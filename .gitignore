@@ -1,0 +1,6 @@
+.venv/
+backend/data/
+backend/db.sqlite3
+backend/**/migrations/
+backend/**/__pycache__/
+**.env
