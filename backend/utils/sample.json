@@ -1,0 +1,70 @@
+{
+  "user_info": {
+    "name": "John Doe",
+    "age": 25,
+    "experience_level": "intermediate"  // Could be beginner, intermediate, or advanced
+  },
+  "preferences": {
+    "favorite_anime": [
+      anime_id, // A "favorite_anime" relationship to anime node in the Neo4j database
+      anime_id, // A "favorite_anime" relationship to anime node in the Neo4j database
+      anime_id // A "favorite_anime" relationship to anime node in the Neo4j database
+     ],
+    "disliked_anime": [
+      anime_id // A "disliked_anime" relationship to anime node in the Neo4j database
+     ],
+    "preferred_genres": [
+      genre, // A "preferred_genre" relationship to genre node in the Neo4j database
+      genre, // A "preferred_genre" relationship to genre node in the Neo4j database
+      genre  // A "preferred_genre" relationship to genre node in the Neo4j database 
+    ],
+    "disliked_genres": [
+      genre // A "disliked_genre" relationship to genre node in the Neo4j database
+    ],
+    "story_preferences": {
+      "type": "continuous",  // Could be episodic or continuous
+      "focus": "balanced",   // Could be character-driven or plot-heavy
+      "complexity": "complex"  // Could be simple or complex
+    },
+    "pacing": "moderate",  // Could be slow, moderate, or fast-paced
+    "thematic_interests": [
+      "friendship",
+      "adventure",
+      "survival"
+    ],
+    "mood": "intense",  // Could be lighthearted, intense, relaxing, etc.
+    "episode_length": "short",  // Could be short, long, or no preference
+    "commitment_level": "low",  // Could be low, medium, or high based on how many episodes they're willing to commit to
+    "maturity_preference": {
+      "violence": "medium",  // Could be low, medium, or high
+      "sexual_content": "low",  // Could be low, medium, or high
+      "family_friendly": false  // True or false
+    },
+    "character_preferences": {
+      "development": "strong",  // Could be weak, strong, or no preference
+      "cast_size": "small"  // Could be small, large, or no preference
+    },
+    "art_style": {
+      "preference": "modern",  // Could be classic, modern, or experimental
+      "flexibility": true  // True if user is open to other styles, false if strict preference
+    },
+    "time_period": "future",  // Could be historical, present-day, or future
+    "setting": "sci-fi",  // Could be realistic, fantasy, or sci-fi
+    "cultural_preference": "universal",  // Could be Japanese-specific, universal, or no preference
+    "language_preference": "subbed"  // Could be subbed or dubbed
+  },
+  "recommended_animes": [
+    {
+      "anime": anime_id, // A "has_been_recommended" relationship to anime node in the Neo4j database
+      "has_enjoyed": true, // Whether the user has enjoyed this anime recommendation
+    }
+  ]
+  "hobbies": {
+    "non_anime_hobbies": [
+      "gaming",
+      "reading",
+      "sports"
+    ],
+    "related_to_hobbies": true  // Whether they want anime related to their hobbies
+  }
+}
