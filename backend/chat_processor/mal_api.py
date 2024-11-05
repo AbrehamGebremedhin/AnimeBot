@@ -128,8 +128,3 @@ class API_CALL:
         if self.driver:
             self.driver.close()
             logging.info("Neo4J driver closed")
-
-
-api = API_CALL(anime_name='naruto')
-print(api.genre_exists(genre_name='sports'))
-api.close()

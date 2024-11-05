@@ -25,12 +25,16 @@ SECRET_KEY = 'django-insecure-bpg#w!dcg8q5tk$32#mui3e5z$q=lv-xt2b%ft-1nv%!or=h^7
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['0.0.0.0']
 
+# settings.py
+AUTH_USER_MODEL = 'Chatbot.CustomUser'
 
 # Application definition
 
 INSTALLED_APPS = [
+    'rest_framework',
+    'Chatbot.apps.ChatbotConfig',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',

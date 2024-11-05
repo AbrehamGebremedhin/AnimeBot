@@ -1,5 +1,5 @@
 from neo4j import GraphDatabase
-from mal_api import API_CALL
+from chat_processor.mal_api import API_CALL
 
 mal_api = API_CALL()
 
@@ -11,6 +11,16 @@ class UserService:
 
     def close(self):
         self.driver.close()
+
+    # 0. Create user
+    def create_user(self, user_id, email, username):
+        query = """
+        CREATE (u:User {id: $user_id, email: $email, username: $username})
+        RETURN u
+        """
+        with self.driver.session() as session:
+            result = session.run(query, user_id=user_id, email=email, username=username)
+            return result.single()
 
     # 1. Update relationship (e.g., favorite_anime)
     def update_relationship(self, user_id, relation_type, node_type, node_value):
