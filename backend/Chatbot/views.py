@@ -31,7 +31,7 @@ class CustomUserDetailAPIView(APIView):
             serializer.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+    
     def delete(self, request, pk):
         user = get_object_or_404(CustomUser, pk=pk)
         user.delete()
