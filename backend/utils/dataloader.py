@@ -104,7 +104,7 @@ class Neo4JDataloader:
                     (
                         f"MERGE ({anime_var}:Anime {{anime_id: $id, name: $name, synopsis: $synopsis, "
                         f"no_episodes: $no_episodes, aired: $aired, status: $status, duration: $duration, "
-                        f"score: $score, image_url: $image_url}})",
+                        f"score: $score, image_url: $image_url, embedded_text: $embedded_text}})",
                         {
                             'id': row['anime_id'], 'name': row['Name'], 'synopsis': row['Synopsis'],
                             'no_episodes': row['Episodes'], 'aired': row['Aired'], 'status': row['Status'],
@@ -117,34 +117,34 @@ class Neo4JDataloader:
                 genres = row['Genres'].split(", ")
                 genre_data = [{'anime_id': row['anime_id'], 'genre': genre} for genre in genres]
                 queries.append((
-                    f"UNWIND $batch as row MATCH (anime:Anime {{anime_id: row.anime_id}}) "
+                    f"UNWIND $batch AS row MATCH (anime:Anime {{anime_id: row.anime_id}}) "
                     f"MERGE (genre:Genre {{name: row.genre}}) MERGE (anime)-[:IN_GENRE]->(genre)",
                     {'batch': genre_data}
                 ))
                 relationship_count += len(genres)
 
                 # Type relationship
+                type_data = [{'anime_id': row['anime_id'], 'type': row['Type']}]
                 queries.append((
-                    f"MATCH (anime:Anime {{anime_id: $anime_id}}) "
-                    f"MERGE (type:Type {{name: $type}}) "
-                    f"MERGE (anime)-[:HAS_TYPE]->(type)",
-                    {'anime_id': row['anime_id'], 'type': row['Type']}
+                    f"UNWIND $batch AS row MATCH (anime:Anime {{anime_id: row.anime_id}}) "
+                    f"MERGE (type:Type {{name: row.type}}) MERGE (anime)-[:HAS_TYPE]->(type)",
+                    {'batch': type_data}
                 ))
 
                 # Source relationship
+                source_data = [{'anime_id': row['anime_id'], 'source': row['Source']}]
                 queries.append((
-                    f"MATCH (anime:Anime {{anime_id: $anime_id}}) "
-                    f"MERGE (source:Source {{name: $source}}) "
-                    f"MERGE (anime)-[:SOURCED_FROM]->(source)",
-                    {'anime_id': row['anime_id'], 'source': row['Source']}
+                    f"UNWIND $batch AS row MATCH (anime:Anime {{anime_id: row.anime_id}}) "
+                    f"MERGE (source:Source {{name: row.source}}) MERGE (anime)-[:SOURCED_FROM]->(source)",
+                    {'batch': source_data}
                 ))
 
                 # Rating relationship
+                rating_data = [{'anime_id': row['anime_id'], 'rating': row['Rating']}]
                 queries.append((
-                    f"MATCH (anime:Anime {{anime_id: $anime_id}}) "
-                    f"MERGE (rating:Rating {{name: $rating}}) "
-                    f"MERGE (anime)-[:RATED_AS]->(rating)",
-                    {'anime_id': row['anime_id'], 'rating': row['Rating']}
+                    f"UNWIND $batch AS row MATCH (anime:Anime {{anime_id: row.anime_id}}) "
+                    f"MERGE (rating:Rating {{name: row.rating}}) MERGE (anime)-[:RATED_AS]->(rating)",
+                    {'batch': rating_data}
                 ))
 
                 batch_queries.extend(queries)

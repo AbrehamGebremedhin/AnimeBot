@@ -1,13 +1,15 @@
+import os
+from dotenv import load_dotenv
 from neo4j import GraphDatabase
 from chat_processor.mal_api import API_CALL
 
 mal_api = API_CALL()
 
+load_dotenv(r'D:\Projects\AnimeBot\config.env')
 
 class UserService:
-
-    def __init__(self, uri, user, password):
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+    def __init__(self):
+        self.driver = GraphDatabase.driver(os.getenv("NEO4J_URI"), auth=(os.getenv("NEO4J_USERNAME"), os.getenv("NEO4J_PASSWORD")))
 
     def close(self):
         self.driver.close()
@@ -53,29 +55,13 @@ class UserService:
         with self.driver.session() as session:
             result = session.run(query, user_id=user_id, value=value)
             return result.single()
-
-    # 3. Update array (e.g., add genre to preferred_genres)
-    def update_array(self, user_id, field_name, value, action="add"):
-        query = f"""
-        MATCH (u:User {{id: $user_id}})
-        """
-        if action == "add":
-            query += f"SET u.{
-                field_name} = coalesce(u.{field_name}, []) + $value RETURN u"
-        elif action == "remove":
-            query += f"SET u.{field_name} = [x IN u.{
-                field_name} WHERE x <> $value] RETURN u"
-        with self.driver.session() as session:
-            result = session.run(query, user_id=user_id, value=value)
-            return result.single()
-
-    # 4. Update nested object (e.g., story_preferences)
-    def update_nested_object(self, user_id, object_field, key, value):
-        query = f"""
-        MATCH (u:User {{id: $user_id}})
-        SET u.{object_field}.{key} = $value
+        
+    # 3. Get user profile
+    def get_user_profile(self, user_id):
+        query = """
+        MATCH (u:User {id: $user_id})
         RETURN u
         """
         with self.driver.session() as session:
-            result = session.run(query, user_id=user_id, value=value)
+            result = session.run(query, user_id=user_id)
             return result.single()
