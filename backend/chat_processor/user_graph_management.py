@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
-from chat_processor.mal_api import API_CALL
+from .mal_api import API_CALL
 
 mal_api = API_CALL()
 

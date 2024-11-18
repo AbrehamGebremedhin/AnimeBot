@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 import pandas as pd
 from neo4j import GraphDatabase
@@ -98,6 +99,21 @@ class Neo4JDataloader:
                 if index < last_checkpoint:
                     continue
 
+                # Parse embedded_text back into a list
+                try:
+                    # Convert the embedded_text JSON string to a Python list of floats
+                    embedded_text = json.loads(row['embedded_text'])
+                    
+                    # Ensure it's a Python list with float elements
+                    if not isinstance(embedded_text, list):
+                        raise ValueError("embedded_text is not a list")
+                    
+                    # Convert all items to float and ensure it's a Python list
+                    embedded_text = list(map(float, embedded_text))
+                except (json.JSONDecodeError, TypeError, ValueError) as e:
+                    logging.error(f"Error processing embedded_text for row {index}: {e}")
+                    embedded_text = None
+
                 # Anime node creation
                 anime_var = f"anime_{row['anime_id']}"
                 queries = [
@@ -108,7 +124,8 @@ class Neo4JDataloader:
                         {
                             'id': row['anime_id'], 'name': row['Name'], 'synopsis': row['Synopsis'],
                             'no_episodes': row['Episodes'], 'aired': row['Aired'], 'status': row['Status'],
-                            'duration': row['Duration'], 'score': row['Score'], 'image_url': row['Image URL'], 'embedded_text': row['embedded_text']
+                            'duration': row['Duration'], 'score': row['Score'], 'image_url': row['Image URL'],
+                            'embedded_text': embedded_text  # Use parsed list here
                         }
                     )
                 ]
@@ -161,7 +178,6 @@ class Neo4JDataloader:
             self.batch_execute(batch_queries)
 
         logging.info(f"Created {node_count} nodes and {relationship_count} relationships in Neo4j")
-
     def load_anime_data(self):
         df = pd.read_csv(r'D:\Projects\AnimeBot\backend\data\embedded_anime_dataset.csv')
         self.process_data_in_batches(df)

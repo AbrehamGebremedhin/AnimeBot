@@ -1,37 +1,60 @@
+import os
 import json
-import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
+from dotenv import load_dotenv
+from django.core.cache import cache
 from langchain_ollama import OllamaLLM
-from langchain.schema import Document
-from chat_processor.user_graph_management import UserService
+from .user_graph_management import UserService
+from langchain_community.graphs import Neo4jGraph
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_community.embeddings import OllamaEmbeddings
 
-  
+load_dotenv(r'D:\Projects\AnimeBot\config.env')
+
 class Chat:
-    def __init__(self):
+    def __init__(self, user_id):
+        """
+        Initialize the Chat class with user ID and necessary components.
+
+        Args:
+            user_id (str): The ID of the user.
+        """
+        self.user_id = user_id
         self.llm = OllamaLLM(model="llama3.1")
         self.parser = JsonOutputParser()
         self.questions = json.load(open(r'D:\Projects\AnimeBot\backend\chat_processor\questions.json'))
-        self.session_history = []
         self.user_service = UserService()
         self.embedder = OllamaEmbeddings(model="nomic-embed-text")
+        self.kg = Neo4jGraph(
+            os.getenv('NEO4J_URI'), 
+            username=os.getenv('NEO4J_USERNAME'), 
+            password=os.getenv('NEO4J_PASSWORD')
+        )
 
-    def embed_text(self, text):
-        return self.embedder.embed_documents(text)
-    
-    def embed_user_profile(self, user_profile):
-        pass
-        
+        # Load session history from Redis
+        self.session_history = cache.get(f"session_history_{self.user_id}", [])
+
+    def save_session_history(self):
+        """
+        Save the current session history to Redis with a 1-hour timeout.
+        """
+        cache.set(f"session_history_{self.user_id}", self.session_history, timeout=3600)
+
+    def reset_session_history(self):
+        """
+        Clear the session history from Redis and reset the local session history.
+        """
+        cache.delete(f"session_history_{self.user_id}")
+        self.session_history = []
+
     def generation_questions(self, category):
         """
-        Paraphrases anime user questions to build the main user profile.
+        Paraphrase anime user questions to build the main user profile.
 
         Args:
-            query (str): The question category to be formatted.
+            category (str): The question category to be formatted.
 
         Returns:
-            Json: The Paraphrased Questions.
+            dict: The paraphrased questions.
         """
         preffered_response = """{
             "": [
@@ -81,120 +104,225 @@ class Chat:
     
     def generate_response(self, reply, user_profile):
         """
-        Formats the user query into the annotation service format.
+        Generate a conversational response based on previous chat history and user profile.
 
         Args:
-            query (str): The user query to be formatted.
+            reply (str): The user's reply.
+            user_profile (dict): The user's profile data.
 
         Returns:
-            str: The formatted query.
+            dict: The chatbot response.
         """
         prompt_template = f"""
             <|system|> 
-            You are a chatbot engine for an anime recommendation application that uses a graph database. You are chat with the user mainly to build a user profile for an anime recommender system you are provided the logged in user profile, session history, the user's reply and previously asked questions. 
-            So your question should be tailored towards anime, personality. All questions should be open-ended.
+            You are a chatbot designed for an anime recommendation application, but you are also friendly and conversational. Your goal is to engage users with questions that feel like chatting with a friend. While some questions can focus on anime, others should feel more personal and casual to build rapport with the user.
 
-            IMPORTANT: Format your response as a single-line JSON string, without line breaks or escaped characters.
-
-            User Profile:
+            **User Profile**:
             {user_profile}
 
-            Session History:  
-            {self.session_history[:10]}
+            **Session History**:
+            {self.session_history[-5:]}
 
-            Previously Asked Questions:
-            {self.questions}
-
-            User Reply: 
+            **User Reply**:
             {reply}
 
-            Output Format: {{
-                "question": "Formatted response"
-            }}  
+            **Contextual Instructions**:
+            - Alternate between anime-related and personal/casual questions to make the conversation more engaging.
+            - Use a friendly and casual tone, avoiding overly formal or robotic phrasing.
+            - Avoid repeating questions from previous conversations or those closely related to the most recent question.
+            - Frame questions as if you’re genuinely curious about the user’s likes, hobbies, and thoughts.
+            - Keep the questions open-ended to encourage more detailed responses from the user.
 
-            Contextual Instructions:
-            - Phrase the question in the questions format to sound and feel like chatting with a human.
-            - Do not ask questions that follow the theme of previously asked questions.
-            - Do not ask the same question, and previousky asked questions twice.
+            **Output Format**:
+            {{
+                "question": "A conversational, open-ended question in a friendly tone."
+            }}
 
-            Rules for JSON:
-            1. Keep the structure of the JSON question, type, options and varname.
-            1. Use double quotes for all variables and values.
-            2. Return ONLY the JSON string without any additional text or comments.
-            3. No line breaks or backticks; respond only with JSON.
-            4. Do not include any additional information in the JSON response.
-            
+            **Examples of Friendly Questions**:
+            - "What’s something fun you’ve been up to lately?"
+            - "What’s your favorite thing about your all-time favorite anime?"
+            - "If you could visit a place from an anime in real life, where would it be and why?"
+            - "When you’re not watching anime, how do you usually spend your time?"
+            - "Is there an anime character you’d love to hang out with in real life?"
+            - "What kind of stories inspire you the most—anime or otherwise?"
+
+            Respond with a single JSON object containing the question, formatted exactly as specified above.
         """
 
         response = self.llm.invoke(prompt_template)
 
+        # Parse and append the generated question to session history
         formatted_response = self.parser.parse(response)
-
         self.session_history.append({
             "system": formatted_response["question"],
             "user": reply
         })
 
         return formatted_response
-    
-    def similarity_search(self, user_profile):
-        profile_embedding = self.embedder.embed_documents([Document(page_content=user_profile)])
-
-        # Fetch all anime embeddings from the Neo4j database
-        fetch_embeddings_query = """
-            MATCH (anime:Anime)
-            RETURN anime.anime_id AS animeId, anime.embedded_text AS embedded_text
-        """
-
-        results = self.kg.query(fetch_embeddings_query)
-
-        # Prepare embeddings and metadata for similarity calculation
-        embeddings = []
-        for result in results:
-            embeddings.append(result['embedded_text'])
-
-        # Convert embeddings and query_embedding to numpy arrays
-        embeddings = np.array(embeddings)
-        query_embedding = np.array(profile_embedding).reshape(1, -1)
-
-        # Compute cosine similarity between query embedding and chunk embeddings
-        similarities = cosine_similarity(query_embedding, embeddings).flatten()
-
-        # Sort the results by similarity score in descending order
-        sorted_indices = np.argsort(-similarities)
-        top_results = sorted_indices[:4]  # Get the top 4 results
-
-        # Create response documents
-        response = []
-        for index in top_results:
-            similarity_score = similarities[index]
-            document = Document(
-                metadata={
-                    'similarity': similarity_score
-                }
-            )
-            response.append(document)
-
-        return response
 
     
-    def chat(self, req_user, user_req, category):
+    def prepare_user_profile_embedding(self, user_profile, session_history):
         """
-        Formats the user query into the annotation service format.
+        Create a user profile string for embedding based on profile and chat history.
 
         Args:
-            query (str): The user query to be formatted.
+            user_profile (dict): The user's profile data.
+            session_history (list): The chat session history.
 
         Returns:
-            str: The formatted query.
+            str: The concatenated user profile string.
+        """
+        profile = []
+
+        # Prioritize user preferences
+        for key, value in user_profile.items():
+            if key in ["preferred_genres", "favorite_anime", "themes"]:
+                profile.append(f"{key}: {value}")
+
+        # Include recent chat history with lower weight
+        for chat in session_history[-5:]:  # Consider only the most recent history
+            profile.append(f"Chat history: System -> {chat['system']}, User -> {chat['user']}")
+
+        return " ".join(profile)
+
+    def similarity_search(self, user_profile):
+        """
+        Perform an improved similarity search using Neo4j and embeddings.
+
+        Args:
+            user_profile (dict): The user's profile data.
+
+        Returns:
+            dict: The search results with anime recommendations.
+        """
+        # Prepare the user profile for embedding
+        user_profile_text = self.prepare_user_profile_embedding(user_profile, self.session_history)
+        user_profile_embedding = self.embedder.embed_query(user_profile_text)
+
+        # Query the Neo4j database with additional filtering for genres
+        search_query = """
+            MATCH (a:Anime)-[:IN_GENRE]->(g:Genre)
+            WHERE g.name IN $preferred_genres
+            WITH a, gds.similarity.cosine(a.embedded_text, $queryEmbedding) AS similarity
+            RETURN a, similarity
+            ORDER BY similarity DESC
+            LIMIT 500
+        """
+        results = self.kg.query(search_query, params={
+            'queryEmbedding': user_profile_embedding,
+            'preferred_genres': user_profile.get("preferred_genres", [])
+        })
+
+        # Refine and rank results
+        recommendations = []
+        for result in results:
+            # Query for related details
+            related_query = """
+                MATCH (a:Anime {anime_id: $anime_id})-[:RATED_AS]->(r:Rating),
+                      (a)-[:HAS_TYPE]->(t:Type),
+                      (a)-[:SOURCED_FROM]->(s:Source),
+                      (a)-[:IN_GENRE]->(g:Genre)
+                RETURN r, t, s, g
+            """
+            related_results = self.kg.query(related_query, params={'anime_id': result["a"]["anime_id"]})
+
+            # Aggregate details
+            ratings = [record["r"]["name"] for record in related_results]
+            types = [record["t"]["name"] for record in related_results]
+            genres = [record["g"]["name"] for record in related_results]
+            sources = [record["s"]["name"] for record in related_results]
+
+            # Calculate final score with additional weights
+            genre_match_score = len(set(user_profile.get("preferred_genres", [])) & set(genres))
+            final_score = result["similarity"] * 0.7 + genre_match_score * 0.3
+
+            recommendations.append({
+                "anime_id": result["a"]["anime_id"],
+                "title": result["a"]["name"],
+                "similarity": result["similarity"],
+                "final_score": final_score,
+                "synopsis": result["a"]["synopsis"],
+                "image_url": result["a"]["image_url"],
+                "score": result["a"]["score"],
+                "aired": result["a"]["aired"],
+                "status": result["a"]["status"],
+                "duration": result["a"]["duration"],
+                "no_episodes": result["a"]["no_episodes"],
+                "rating": ratings,
+                "type": types,
+                "sourced_from": sources,
+                "genres": genres
+            })
+
+        # Sort by final score and take the top 5
+        recommendations = sorted(recommendations, key=lambda x: x["final_score"], reverse=True)[:10]
+
+        # Generate JSON response
+        prompt_template = f"""
+        <|system|> 
+        You are an anime recommendation chatbot using a graph database. Your primary task is to recommend anime based on a user profile and anime data obtained through vector similarity search and metadata analysis. Tailor the recommendations to align closely with the user's preferences, focusing on their favorite genres, themes, and storytelling preferences.
+
+        **User Profile**:
+        {user_profile_text}
+
+        **Anime Data**:
+        {recommendations}
+
+        **Contextual Instructions**:
+        - Carefully review the user's profile to understand their preferences, including genres, storytelling styles, themes, and past responses.
+        - Consider both the similarity score and the overlap of genres/themes when ranking the recommendations. Prioritize recommendations that strongly align with the user's preferences. 
+        - Ensure the recommendations are diverse, offering a mix of well-rated shows and a few underrated gems.
+        - Highlight character-driven stories if the user values character development.
+        - Avoid recommending shows that the user has explicitly stated they dislike (if available in the profile).
+        - Focus on providing anime with engaging, high-quality storytelling.
+
+        **Output Format**:
+        {{
+            "Recommendations": [
+                {{
+                    "anime_id": "Anime ID",
+                    "title": "Anime Title",
+                    "similarity": "Similarity Score (0.0 to 1.0)",
+                    "synopsis": "Anime Synopsis",
+                    "image_url": "Image URL",
+                    "score": "Anime Score (e.g., 8.5)",
+                    "aired": "Aired Date (e.g., Oct 3, 2015 to Mar 26, 2016)",
+                    "status": "Status (e.g., Finished Airing)",
+                    "duration": "Episode Duration (e.g., 24 min per ep)",
+                    "no_episodes": "Number of Episodes",
+                    "rating": ["Rating (e.g., PG-13)"],
+                    "type": ["Anime Type (e.g., TV, Movie)"],
+                    "sourced_from": ["Source Material (e.g., Manga, Light Novel)"],
+                    "genres": ["List of Genres (e.g., Action, Drama)"]
+                }}
+            ]
+        }}
+
+        Respond only with the JSON object.
+        """
+
+        response = self.llm.invoke(prompt_template)
+        formatted_response = self.parser.parse(response)
+        return formatted_response
+
+    def chat(self, req_user, user_req, category):
+        """
+        Handle the chat interaction with the user.
+
+        Args:
+            req_user (str): The requesting user's ID.
+            user_req (str): The user's request or message.
+            category (str): The category of the request, if any.
+
+        Returns:
+            dict: The generated response based on the user's request and profile.
         """
         user_profile = self.user_service.get_user_profile(req_user)
-        
+
         if user_req == "/recommend":
-            pass
+            return self.similarity_search(user_profile=user_profile)
         elif category is None:
             return self.generate_response(reply=user_req, user_profile=user_profile)
         else:
             return self.generation_questions(category=category)
-
-
+        
