@@ -57,7 +57,7 @@ class Chat:
             dict: The paraphrased questions.
         """
         preffered_response = """{
-            "": [
+            "{category}": [
                 {
                     "question": "Paraphrased question",
                     "type": "Question Type",
@@ -204,9 +204,17 @@ class Chat:
             MATCH (a:Anime)-[:IN_GENRE]->(g:Genre)
             WHERE g.name IN $preferred_genres
             WITH a, gds.similarity.cosine(a.embedded_text, $queryEmbedding) AS similarity
-            RETURN a, similarity
+            OPTIONAL MATCH (a)-[:RATED_AS]->(r:Rating),
+                        (a)-[:HAS_TYPE]->(t:Type),
+                        (a)-[:SOURCED_FROM]->(s:Source),
+                        (a)-[:IN_GENRE]->(genre:Genre)
+            RETURN a, similarity, 
+                COLLECT(DISTINCT r.name) AS ratings, 
+                COLLECT(DISTINCT t.name) AS types, 
+                COLLECT(DISTINCT s.name) AS sources, 
+                COLLECT(DISTINCT genre.name) AS genres
             ORDER BY similarity DESC
-            LIMIT 500
+            LIMIT 100
         """
         results = self.kg.query(search_query, params={
             'queryEmbedding': user_profile_embedding,
@@ -216,24 +224,8 @@ class Chat:
         # Refine and rank results
         recommendations = []
         for result in results:
-            # Query for related details
-            related_query = """
-                MATCH (a:Anime {anime_id: $anime_id})-[:RATED_AS]->(r:Rating),
-                      (a)-[:HAS_TYPE]->(t:Type),
-                      (a)-[:SOURCED_FROM]->(s:Source),
-                      (a)-[:IN_GENRE]->(g:Genre)
-                RETURN r, t, s, g
-            """
-            related_results = self.kg.query(related_query, params={'anime_id': result["a"]["anime_id"]})
-
-            # Aggregate details
-            ratings = [record["r"]["name"] for record in related_results]
-            types = [record["t"]["name"] for record in related_results]
-            genres = [record["g"]["name"] for record in related_results]
-            sources = [record["s"]["name"] for record in related_results]
-
             # Calculate final score with additional weights
-            genre_match_score = len(set(user_profile.get("preferred_genres", [])) & set(genres))
+            genre_match_score = len(set(user_profile.get("preferred_genres", [])) & set(result["genres"]))
             final_score = result["similarity"] * 0.7 + genre_match_score * 0.3
 
             recommendations.append({
@@ -248,10 +240,10 @@ class Chat:
                 "status": result["a"]["status"],
                 "duration": result["a"]["duration"],
                 "no_episodes": result["a"]["no_episodes"],
-                "rating": ratings,
-                "type": types,
-                "sourced_from": sources,
-                "genres": genres
+                "rating": result["ratings"],
+                "type": result["types"],
+                "sourced_from": result["sources"],
+                "genres": result["genres"]
             })
 
         # Sort by final score and take the top 5
@@ -259,50 +251,54 @@ class Chat:
 
         # Generate JSON response
         prompt_template = f"""
-        <|system|> 
-        You are an anime recommendation chatbot using a graph database. Your primary task is to recommend anime based on a user profile and anime data obtained through vector similarity search and metadata analysis. Tailor the recommendations to align closely with the user's preferences, focusing on their favorite genres, themes, and storytelling preferences.
+            <|system|> 
+            You are an anime recommendation chatbot using a graph database. Your primary task is to recommend anime based on a user profile and anime data obtained through vector similarity search and metadata analysis. But do not change or modify the original fields for anime_id, synopsis, or image_url.
 
-        **User Profile**:
-        {user_profile_text}
+            IMPORTANT RULES:
+            - DO NOT PARAPHRASE, ALTER, REPLACE OR CHANGE the original fields for **anime_id**, **synopsis**, or **image_url**.
 
-        **Anime Data**:
-        {recommendations}
+            **User Profile**:
+            {user_profile_text}
 
-        **Contextual Instructions**:
-        - Carefully review the user's profile to understand their preferences, including genres, storytelling styles, themes, and past responses.
-        - Consider both the similarity score and the overlap of genres/themes when ranking the recommendations. Prioritize recommendations that strongly align with the user's preferences. 
-        - Ensure the recommendations are diverse, offering a mix of well-rated shows and a few underrated gems.
-        - Highlight character-driven stories if the user values character development.
-        - Avoid recommending shows that the user has explicitly stated they dislike (if available in the profile).
-        - Focus on providing anime with engaging, high-quality storytelling.
+            **Anime Data**:
+            {recommendations}
 
-        **Output Format**:
-        {{
-            "Recommendations": [
-                {{
-                    "anime_id": "Anime ID",
-                    "title": "Anime Title",
-                    "similarity": "Similarity Score (0.0 to 1.0)",
-                    "synopsis": "Anime Synopsis",
-                    "image_url": "Image URL",
-                    "score": "Anime Score (e.g., 8.5)",
-                    "aired": "Aired Date (e.g., Oct 3, 2015 to Mar 26, 2016)",
-                    "status": "Status (e.g., Finished Airing)",
-                    "duration": "Episode Duration (e.g., 24 min per ep)",
-                    "no_episodes": "Number of Episodes",
-                    "rating": ["Rating (e.g., PG-13)"],
-                    "type": ["Anime Type (e.g., TV, Movie)"],
-                    "sourced_from": ["Source Material (e.g., Manga, Light Novel)"],
-                    "genres": ["List of Genres (e.g., Action, Drama)"]
-                }}
-            ]
-        }}
+            **Contextual Instructions**:
+            - Focus on aligning the recommendations with the user's preferences, especially genres and themes.
+            - Rank recommendations by both similarity score and genre match.
+            - Ensure diversity in recommendations while respecting the user's dislikes (if any).
 
-        Respond only with the JSON object.
-        """
+            **Output Format**:
+            {{
+                "Recommendations": [
+                    {{
+                        "anime_id": "anime_id" # do not change the original anime_id in the Anime Data,
+                        "title": "Original title",
+                        "similarity": "Similarity Score (0.0 to 1.0)",
+                        "synopsis": "Original synopsis (DO NOT MODIFY)",
+                        "image_url": "Original image_url (DO NOT MODIFY)",
+                        "score": "Original Anime Score",
+                        "aired": "Original Aired Date",
+                        "status": "Original Status",
+                        "duration": "Original Episode Duration",
+                        "no_episodes": "Original Number of Episodes",
+                        "rating": ["Original Rating"],
+                        "type": ["Original Anime Type"],
+                        "sourced_from": ["Original Source Material"],
+                        "genres": ["Original List of Genres"]
+                    }}
+                ]
+            }}
+
+            Respond ONLY with the JSON object. Do not add extra explanations or context.
+            """
+
 
         response = self.llm.invoke(prompt_template)
+        
+        # Parse the LLM response
         formatted_response = self.parser.parse(response)
+
         return formatted_response
 
     def chat(self, req_user, user_req, category):
@@ -325,4 +321,4 @@ class Chat:
             return self.generate_response(reply=user_req, user_profile=user_profile)
         else:
             return self.generation_questions(category=category)
-        
+            

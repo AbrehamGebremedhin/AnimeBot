@@ -52,6 +52,21 @@ class API_CALL:
             exists = record['exists']
             unique_id = record['unique_id'] if exists else None
             return exists, unique_id
+        
+    def anime_data(self, anime_name):
+        api_url = f"https://api.myanimelist.net/v2/anime?q={
+            anime_name}&limit=1&fields=synopsis"
+        response = requests.request('GET', api_url, headers={
+            "X-MAL-CLIENT-ID": os.getenv('CLIENT_ID')
+        })
+
+        if response.status_code == 200:
+            data = response.json()['data'][0]['node']
+            url = data['main_picture']['large']
+            synopsis = data['synopsis']
+
+            return url, synopsis
+
 
     def genre_exists(self, genre_name):
         query = """
@@ -88,8 +103,7 @@ class API_CALL:
             try:
                 embedding = self.embed_text(self.create_anime_text(data))
             except Exception as e:
-                logging.error(f"Failed to embed text for anime {
-                              anime_id}: {e}")
+                logging.error(f"Failed to embed text for anime {anime_id}: {e}")
                 return
 
             anime_var = f"anime_{anime_id}"

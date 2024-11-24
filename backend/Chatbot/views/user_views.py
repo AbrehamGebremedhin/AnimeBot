@@ -35,10 +35,12 @@ class CustomUserListCreateAPIView(APIView):
         Returns:
             Response: A response object containing serialized user data or errors.
         """
+        print(request.data)
         serializer = CustomUserSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
+        print(serializer.errors)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class CustomUserDetailAPIView(APIView):
@@ -107,9 +109,10 @@ class UserProfileAPIView(APIView):
         Returns:
             Response: A response object containing questions.
         """
-        chat = Chat()
+        user_id = int(request.data.get('user_id'))
+        chat = Chat(user_id=user_id)
         category = request.data.get('category')
-        questions = chat.chat(req_user=request.data.get('user_id'), category=category, user_req=None)
+        questions = chat.chat(req_user=user_id, category=category, user_req=None)
         questions = questions[category]
         return Response(questions, status=status.HTTP_200_OK)
 
@@ -124,9 +127,10 @@ class UserProfileAPIView(APIView):
             Response: A response object indicating the update status.
         """
         service = UserService()
-        
+        print(request.data)
+        user_id = int(request.data.get('user_id'))
         for key, value in request.data.get('fields').items():
-            service.update_variable(user_id=request.data.get('user_id'), field_name=f"{request.data.get('category')}_{key}", value=value)
+            service.update_variable(user_id=user_id, field_name=f"{request.data.get('category')}_{key}", value=value)
 
         return Response(status=status.HTTP_202_ACCEPTED)
     
