@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-bpg#w!dcg8q5tk$32#mui3e5z$q=lv-xt2b%ft-1nv%!or=h^7
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['0.0.0.0', '127.0.0.1', '10.0.2.2', '192.168.34.208'] 
+ALLOWED_HOSTS = ['0.0.0.0', '127.0.0.1', '10.0.2.2', '192.168.12.208'] 
 
 # settings.py
 AUTH_USER_MODEL = 'Chatbot.CustomUser'
