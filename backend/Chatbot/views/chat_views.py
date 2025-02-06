@@ -29,7 +29,8 @@ class ChatBotAPIView(APIView):
         # Check for /recommend command
         if user_reply == "/recommend":
             response = chat.chat(req_user=user_id, category=None, user_req=user_reply)
-
+            
+            print(user_id)
             for recommendation in response["Recommendations"]:
                 url, synopsis = mal_api.anime_data(recommendation["title"])
                 recommendation["image_url"] = url

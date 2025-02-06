@@ -10,6 +10,8 @@ from langchain_community.embeddings import OllamaEmbeddings
 
 load_dotenv(r'D:\Projects\AnimeBot\config.env')
 
+DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
+
 class Chat:
     def __init__(self, user_id):
         """
@@ -19,7 +21,7 @@ class Chat:
             user_id (str): The ID of the user.
         """
         self.user_id = user_id
-        self.llm = OllamaLLM(model="llama3.1")
+        self.llm = OllamaLLM(model="llama3.2")
         self.parser = JsonOutputParser()
         self.questions = json.load(open(r'D:\Projects\AnimeBot\backend\chat_processor\questions.json'))
         self.user_service = UserService()
@@ -272,11 +274,11 @@ class Chat:
             {{
                 "Recommendations": [
                     {{
-                        "anime_id": "anime_id" # do not change the original anime_id in the Anime Data,
-                        "title": "Original title",
+                        "anime_id": recommendations["anime_id"] # do not change the original anime_id in the Anime Data,
+                        "title": recommendations["Original title"],
                         "similarity": "Similarity Score (0.0 to 1.0)",
-                        "synopsis": "Original synopsis (DO NOT MODIFY)",
-                        "image_url": "Original image_url (DO NOT MODIFY)",
+                        "synopsis": recommendations["synopsis"],
+                        "image_url": recommendations["image_url"],
                         "score": "Original Anime Score",
                         "aired": "Original Aired Date",
                         "status": "Original Status",
