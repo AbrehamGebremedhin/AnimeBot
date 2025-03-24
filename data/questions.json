@@ -1,0 +1,174 @@
+{
+  "user_info": [
+    {
+      "question": "How old are you?",
+      "type": "multiple-choice",
+      "Options": ["18-24", "25-34", "35-44", "45-54", "55+"],
+      "var_name": "user_age"
+    },
+    {
+      "question": "How would you describe your experience with anime?",
+      "type": "multiple-choice",
+      "Options": ["beginner", "intermediate", "advanced"],
+      "var_name": "user_experience"
+    }
+  ],
+  "preferences": [
+    {
+      "question": "What are some of your absoulte favorite animes?",
+      "type": "open-ended",
+      "Options": [],
+      "var_name": "favorite_animes"
+    },
+    {
+      "question": "Which genres do you enjoy watching?",
+      "type": "open-ended",
+      "Options": [],
+      "var_name": "favorite_genres"
+    },
+    {
+      "question": "Which anime do you particularly dislike?",
+      "type": "open-ended",
+      "Options": [],
+      "var_name": "disliked_animes"
+    },
+    {
+      "question": "Which genres do you not enjoy watching?",
+      "type": "open-ended",
+      "Options": [],
+      "var_name": "disliked_genres"
+    },
+    {
+      "question": "Do you prefer light-hearted or serious anime?",
+      "type": "multiple-choice",
+      "Options": ["light-hearted", "serious"],
+      "var_name": "mood"
+    }
+  ],
+  "hobbies": [
+    {
+      "question": "What are your non-anime hobbies?",
+      "type": "open-ended",
+      "Options": [],
+      "var_name": "hobbies"
+    },
+    {
+      "question": "Do you want anime recommendations related to your hobbies?",
+      "type": "multiple-choice",
+      "Options": ["yes", "no"],
+      "var_name": "related_to_hobbies"
+    }
+  ],
+  "story_preferences": [
+    {
+      "question": "Do you prefer standalone episodic stories or continuous story arcs?",
+      "type": "multiple-choice",
+      "Options": ["episodic", "continuous"],
+      "var_name": "story_preference"
+    },
+    {
+      "question": "Are you looking for something plot-heavy or more character-driven?",
+      "type": "multiple-choice",
+      "Options": ["plot-heavy", "character-driven"],
+      "var_name": "plot_vs_character"
+    },
+    {
+      "question": "How do you feel about plot complexity?",
+      "type": "multiple-choice",
+      "options": ["Simple", "Complex", "No Preference"],
+      "var_name": "plot_complexity"
+    },
+    {
+      "question": "How important is plot pacing to you?",
+      "type": "multiple-choice",
+      "options": ["Very important", "Not very important"],
+      "var_name": "plot_pacing"
+    }
+  ],
+  "art_style_and_animation": [
+    {
+      "question": "What is your preferred animation style?",
+      "type": "multiple-choice",
+      "Options": ["modern", "classic", "vibrant", "minimalistic"],
+      "var_name": "animation_style"
+    },
+    {
+      "question": "Do you enjoy unique or experimental animation?",
+      "type": "multiple-choice",
+      "Options": ["yes", "no"],
+      "var_name": "unique_animation"
+    }
+  ],
+  "character_types": [
+    {
+      "question": "Do you prefer character-driven stories with strong character development?",
+      "type": "multiple-choice",
+      "Options": ["yes", "no"],
+      "var_name": "character_development"
+    },
+    {
+      "question": "Are you into action-heavy, fast-paced stories?",
+      "type": "multiple-choice",
+      "Options": ["yes", "no"],
+      "var_name": "action_packed"
+    }
+  ],
+  "maturity_and_content": [
+    {
+      "question": "How comfortable are you with mature content (violence, gore, sexual themes)?",
+      "type": "multiple-choice",
+      "Options": [
+        "very comfortable",
+        "somewhat comfortable",
+        "not very comfortable",
+        "not at all comfortable"
+      ],
+      "var_name": "mature_content"
+    },
+    {
+      "question": "Do you have age or content restrictions/preferences?",
+      "type": "multiple-choice",
+      "Options": ["yes", "no"],
+      "var_name": "content_restriction"
+    }
+  ],
+  "cultural_and_thematic_interests": [
+    {
+      "question": "Are you interested in certain cultural themes (e.g., samurai, Japanese history, cyberpunk)?",
+      "type": "multiple-choice",
+      "Options": ["yes", "no"],
+      "var_name": "cultural_themes"
+    },
+    {
+      "question": "What type of cultural theme or setting would you be interested in?",
+      "type": "open-ended",
+      "options": [],
+      "var_name": "specific_cultural_theme"
+    },
+    {
+      "question": "Do you prefer anime set in fantasy worlds, high school, or futuristic settings?",
+      "type": "multiple-choice",
+      "Options": ["fantasy world", "high school", "futuristic setting"],
+      "var_name": "setting_preference"
+    }
+  ],
+  "mood_and_emotional_preferences": [
+    {
+      "question": "Are you looking for something relaxing and feel-good or something intense and emotional?",
+      "type": "multiple-choice",
+      "Options": ["relaxing", "intense"],
+      "var_name": "mood_preference"
+    },
+    {
+      "question": "How long do you want anime episodes to be?",
+      "type": "multiple-choice",
+      "Options": [
+        "12 episodes or less",
+        "13-24 episodes",
+        "25-50 episodes",
+        "51+ episodes"
+      ],
+      "var_name": "episode_length"
+    }
+  ]
+}

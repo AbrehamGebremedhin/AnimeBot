@@ -1,0 +1,13 @@
+.venv/
+
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
+*.egg
+*.egg-info
+*.db
+*.csv
+*.env
+*.iml

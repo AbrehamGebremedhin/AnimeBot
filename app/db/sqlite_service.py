@@ -1,0 +1,72 @@
+from typing import List, Optional
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.future import select
+
+from .models import Base, User
+
+class SQLiteService:
+    def __init__(self, database_url: str = "sqlite+aiosqlite:///./app.db"):
+        self.engine = create_async_engine(
+            database_url, 
+            echo=False,
+            connect_args={"check_same_thread": False}
+        )
+        self.async_session = sessionmaker(
+            bind=self.engine,
+            class_=AsyncSession,
+            expire_on_commit=False
+        )
+        
+    async def create_tables(self):
+        """Create all tables defined in models"""
+        async with self.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    
+    # User-related operations
+    async def create_user(self, username: str) -> User:
+        """Create a new user with the given username"""
+        async with self.async_session() as session:
+            new_user = User(username=username)
+            session.add(new_user)
+            await session.commit()
+            await session.refresh(new_user)
+            return new_user
+    
+    async def get_user_by_id(self, user_id: int) -> Optional[User]:
+        """Get a user by their ID"""
+        async with self.async_session() as session:
+            result = await session.execute(select(User).where(User.id == user_id))
+            return result.scalars().first()
+    
+    async def get_user_by_username(self, username: str) -> Optional[User]:
+        """Get a user by their username"""
+        async with self.async_session() as session:
+            result = await session.execute(select(User).where(User.username == username))
+            return result.scalars().first()
+    
+    async def get_all_users(self) -> List[User]:
+        """Get all users"""
+        async with self.async_session() as session:
+            result = await session.execute(select(User))
+            return result.scalars().all()
+    
+    async def update_username(self, user_id: int, new_username: str) -> Optional[User]:
+        """Update a user's username"""
+        async with self.async_session() as session:
+            user = await session.get(User, user_id)
+            if user:
+                user.username = new_username
+                await session.commit()
+                return user
+            return None
+    
+    async def delete_user(self, user_id: int) -> bool:
+        """Delete a user by their ID"""
+        async with self.async_session() as session:
+            user = await session.get(User, user_id)
+            if user:
+                await session.delete(user)
+                await session.commit()
+                return True
+            return False
