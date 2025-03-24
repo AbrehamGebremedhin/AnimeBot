@@ -61,7 +61,24 @@ class UserService:
         MATCH (u:User {id: $user_id})
         RETURN u
         """
-        async with self.async_driver.session() as session:
-            result = await session.run(query, user_id=user_id)
-            record = await result.single()
-            return record
+        try:
+            async with self.async_driver.session() as session:
+                result = await session.run(query, user_id=user_id)
+                record = await result.single()
+                
+                if record:
+                    # Convert Neo4j node to dictionary
+                    user_data = dict(record["u"].items())
+                    
+                    # Add default empty list for preferred_genres if not present
+                    if "preferred_genres" not in user_data:
+                        user_data["preferred_genres"] = []
+                    
+                    return user_data
+                else:
+                    # Return a default profile if user not found
+                    return {"id": user_id, "preferred_genres": []}
+        except Exception as e:
+            print(f"Error getting user profile: {str(e)}")
+            # Return a default profile on error
+            return {"id": user_id, "preferred_genres": []}

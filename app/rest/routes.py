@@ -144,31 +144,33 @@ async def chat_with_bot(chat_request: ChatRequest):
         
         # Initialize chat instance
         chat = Chat(user_id=user_id)
-        mal_api = API_CALL()
         
-        if user_reply == "/recommend":
-            # Handle recommendation request
-            response = await get_chat_response(chat, user_id, None, user_reply)
-            recommendations = await process_recommendations(response["Recommendations"], mal_api)
-            await chat.reset_session_history()
-            return recommendations
-        
-        elif user_reply == "":
-            # Generate response for empty user input
-            response = await get_chat_response(chat, user_id, None, "Hello")
-            await chat.save_session_history()
-            return response
-        
-        else:
-            # Generate response for normal user input
-            response = await get_chat_response(chat, user_id, None, user_reply)
-            await chat.save_session_history()
-            return response
+        # Use API_CALL as a context manager to ensure proper cleanup
+        async with API_CALL() as mal_api:
+            if user_reply == "/recommend":
+                # Handle recommendation request
+                response = await get_chat_response(chat, user_id, None, user_reply)
+                recommendations = await process_recommendations(response["Recommendations"], mal_api)
+                await chat.reset_session_history()
+                return recommendations
             
+            elif user_reply == "":
+                # Generate response for empty user input
+                response = await get_chat_response(chat, user_id, None, "Hello")
+                await chat.save_session_history()
+                return response
+            
+            else:
+                # Generate response for normal user input
+                response = await get_chat_response(chat, user_id, None, user_reply)
+                await chat.save_session_history()
+                return response
+                
     except Exception as e:
+        logger.error(f"Error in chat_with_bot: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"An error occurred while processing the chat request: {str(e)}"
         )
 
 # Helper functions (these would need to be implemented with your actual database logic)
@@ -202,8 +204,8 @@ async def update_user_profile(service, user_id, category, fields):
     """Update user profile asynchronously"""
     tasks = []
     for key, value in fields.items():
-        task = asyncio.to_thread(
-            service.update_variable, 
+        # Directly call the async method instead of using asyncio.to_thread
+        task = service.update_variable(
             user_id=user_id, 
             field_name=f"{category}_{key}", 
             value=value
@@ -218,20 +220,63 @@ async def get_chat_response(chat, user_id, category, user_req):
 
 async def process_recommendations(recommendations, mal_api):
     """Process anime recommendations concurrently"""
-    tasks = []
-    for recommendation in recommendations:
-        task = get_anime_data(mal_api, recommendation)
-        tasks.append(task)
-    return await asyncio.gather(*tasks)
+    try:
+        if not recommendations or not isinstance(recommendations, list):
+            logger.error(f"Invalid recommendations format: {recommendations}")
+            return []
+        
+        tasks = []
+        for recommendation in recommendations:
+            task = get_anime_data(mal_api, recommendation)
+            tasks.append(task)
+        
+        return await asyncio.gather(*tasks)
+    except Exception as e:
+        logger.error(f"Error processing recommendations: {str(e)}")
+        return recommendations  # Return original recommendations if processing fails
 
 async def get_anime_data(mal_api, recommendation):
     """Get anime data asynchronously"""
-    url, synopsis = await asyncio.to_thread(
-        mal_api.anime_data, recommendation["title"]
-    )
-    recommendation["image_url"] = url
-    recommendation["synopsis"] = synopsis
-    return recommendation
+    try:
+        # Ensure recommendation has required fields
+        if not recommendation or not isinstance(recommendation, dict):
+            logger.error(f"Invalid recommendation format: {recommendation}")
+            return {}
+            
+        if "title" not in recommendation:
+            logger.error(f"Missing title in recommendation: {recommendation}")
+            return recommendation
+        
+        # Check if anime_data is an async method
+        if asyncio.iscoroutinefunction(mal_api.anime_data):
+            # If it's async, await it directly
+            url, synopsis = await mal_api.anime_data(recommendation["title"])
+        else:
+            # If it's synchronous, use to_thread
+            try:
+                url, synopsis = await asyncio.to_thread(
+                    mal_api.anime_data, recommendation["title"]
+                )
+            except Exception as e:
+                logger.error(f"Error in asyncio.to_thread for anime_data: {str(e)}")
+                # Don't await if it's a coroutine object created by to_thread
+                if asyncio.iscoroutine(mal_api.anime_data(recommendation["title"])):
+                    logger.info("anime_data is a coroutine, calling directly")
+                    url, synopsis = await mal_api.anime_data(recommendation["title"])
+                else:
+                    # Fallback to direct call
+                    url, synopsis = mal_api.anime_data(recommendation["title"])
+        
+        # Only update if we got valid data
+        if url:
+            recommendation["image_url"] = url
+        if synopsis:
+            recommendation["synopsis"] = synopsis
+        
+        return recommendation
+    except Exception as e:
+        logger.error(f"Error getting anime data for {recommendation.get('title', 'unknown')}: {str(e)}")
+        return recommendation
 
 # Register routers in your main app
 # In your main.py or similar:

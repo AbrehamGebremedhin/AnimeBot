@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text  # Add this import
 import os
 import logging
 from .models import Base
@@ -40,6 +41,21 @@ async def get_db():
         finally:
             await session.close()
 
+async def handle_neo4j_warnings(warning_message):
+    """
+    Handle Neo4j specific warnings to prevent log clutter.
+    
+    Args:
+        warning_message: The warning message from Neo4j
+    """
+    # Check if it's a common aggregation null value warning
+    if "null value eliminated in set function" in str(warning_message):
+        # Log at debug level instead of warning level
+        logger.debug(f"Neo4j aggregation warning (expected behavior): {warning_message}")
+    else:
+        # Log other Neo4j warnings normally
+        logger.warning(f"Neo4j warning: {warning_message}")
+
 async def init_db():
     """Initialize the database by creating all tables"""
     try:
@@ -61,10 +77,13 @@ async def init_db():
         
         # Verify the tables were created
         async with engine.connect() as conn:
-            tables = await conn.run_sync(lambda sync_conn: sync_conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table';"
+            # Run the query to get table names
+            result = await conn.run_sync(lambda sync_conn: sync_conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table';")
             ))
-            table_names = [table[0] for table in await tables.fetchall()]
+            # Get all rows from the result object - no need to await fetchall()
+            rows = result.fetchall()
+            table_names = [table[0] for table in rows]
             logger.info(f"Tables in database: {table_names}")
             
             # Specifically check for users table
@@ -77,10 +96,12 @@ async def init_db():
             for table_name in table_names:
                 if table_name.startswith('sqlite'):
                     continue
-                table_info = await conn.run_sync(lambda sync_conn: sync_conn.execute(
-                    f"PRAGMA table_info({table_name});"
+                # Run query to get table info
+                table_info_result = await conn.run_sync(lambda sync_conn: sync_conn.execute(
+                    text(f"PRAGMA table_info({table_name});")
                 ))
-                columns = await table_info.fetchall()
+                # Get columns directly from result - no need to await fetchall()
+                columns = table_info_result.fetchall()
                 logger.info(f"Table {table_name} structure: {columns}")
             
     except Exception as e:

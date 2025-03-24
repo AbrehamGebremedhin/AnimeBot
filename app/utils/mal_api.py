@@ -16,7 +16,7 @@ except ModuleNotFoundError:
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 # Load environment variables
-load_dotenv(r'D:\Projects\AnimeBot\config.env')
+load_dotenv(r'.env')
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO,
@@ -42,17 +42,31 @@ class API_CALL:
         # Create a shared session for HTTP requests
         self.http_session = None
         self.client_id = os.getenv('CLIENT_ID')
+        self._setup_called = False
+
+    async def __aenter__(self):
+        """Async context manager enter method"""
+        await self.setup()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit method"""
+        await self.close()
+        return False  # Don't suppress exceptions
 
     async def setup(self):
         """Initialize HTTP session for reuse"""
         if not self.http_session:
             self.http_session = aiohttp.ClientSession()
+            self._setup_called = True
+        return self
 
     async def close_http_session(self):
         """Close the HTTP session"""
         if self.http_session:
             await self.http_session.close()
             self.http_session = None
+            self._setup_called = False
 
     def create_anime_text(self, row):
         genres = ", ".join([genre['name'] for genre in row['genres']])
@@ -244,10 +258,7 @@ async def example_usage():
     """
     Example demonstrating how to use the API_CALL class
     """
-    # Initialize the API client
-    api_client = API_CALL()
-    
-    try:
+    async with API_CALL() as api_client:
         # Example 1: Check if entities exist
         anime_name = "Cowboy Bebop"
         exists, anime_id = await api_client.anime_exists_name(anime_name)
@@ -275,10 +286,6 @@ async def example_usage():
         # Example 5: Use the consolidated entity_exists function directly
         exists, entity_id = await api_client.entity_exists("Rating", "PG-13")
         print(f"'PG-13' rating exists: {exists}, ID: {entity_id}")
-    
-    finally:
-        # Always close the connection
-        await api_client.close()
 
 if __name__ == "__main__":
     # Run the example

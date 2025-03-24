@@ -4,6 +4,7 @@ import asyncio
 import logging
 from .db.database import init_db
 from .rest.routes import user_router, profile_router, chat_router
+from .utils.neo4j_connection import Neo4jConnection
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -45,6 +46,31 @@ async def startup_event():
         import sys
         logger.error("Exiting application due to database initialization failure")
         sys.exit(1)
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up resources when shutting down"""
+    logger.info("Shutting down application, cleaning up resources...")
+    
+    # Close Neo4j connections
+    neo4j_connection = Neo4jConnection()
+    neo4j_connection.close()
+    
+    # Allow time for pending tasks to complete
+    pending = asyncio.all_tasks()
+    logger.info(f"Waiting for {len(pending)} pending tasks to complete...")
+    
+    # Give tasks some time to complete
+    for task in pending:
+        try:
+            # Only wait for a short time to avoid hanging shutdown
+            await asyncio.wait_for(task, timeout=2.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            pass
+        except Exception as e:
+            logger.error(f"Error in task during shutdown: {str(e)}")
+    
+    logger.info("Application shutdown complete")
 
 # Include routers only after database initialization
 app.include_router(user_router, tags=["users"])
