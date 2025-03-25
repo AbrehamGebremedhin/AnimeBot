@@ -270,6 +270,24 @@ class Chat:
             
             print(f"Embedding type: {type(embedding_vector)}, Length: {len(embedding_vector) if hasattr(embedding_vector, '__len__') else 'unknown'}")
 
+            # Add a diagnostic query to check if relationships exist at all
+            with self.neo4j_driver.session() as session:
+                diagnostic_query = """
+                MATCH (a:Anime) 
+                WHERE a.anime_id IS NOT NULL
+                OPTIONAL MATCH (a)-[r]->(n)
+                RETURN a.name as anime, type(r) as relationship, labels(n) as node_type, n.name as related_name
+                LIMIT 10
+                """
+                try:
+                    result = session.run(diagnostic_query)
+                    relations = [record.data() for record in result]
+                    print(f"Diagnostic - Found {len(relations)} relationships")
+                    for rel in relations:
+                        print(f"  Anime: {rel.get('anime')}, Relation: {rel.get('relationship')}, Target: {rel.get('related_name')}")
+                except Exception as e:
+                    print(f"Diagnostic query failed: {str(e)}")
+
             # Get preferred genres, default to empty list if not present
             preferred_genres = user_profile.get("preferred_genres", [])
             if not isinstance(preferred_genres, list):
@@ -278,13 +296,14 @@ class Chat:
             # Determine if we should filter by genre
             has_genre_preferences = len(preferred_genres) > 0
             
-            # Basic query without complex vector operations for testing
+            # The relationship names must match EXACTLY what's in dataloader.py
+            # IN_GENRE, IS_TYPE, ADAPTED_FROM, HAS_RATING
             fallback_query = """
                 MATCH (a:Anime)
-                OPTIONAL MATCH (a)-[:HAS_RATING]->(r:Rating),
-                            (a)-[:IS_TYPE]->(t:Type),
-                            (a)-[:ADAPTED_FROM]->(s:Source),
-                            (a)-[:IN_GENRE]->(genre:Genre)
+                OPTIONAL MATCH (a)-[:HAS_RATING]->(r:Rating)
+                OPTIONAL MATCH (a)-[:IS_TYPE]->(t:Type)
+                OPTIONAL MATCH (a)-[:ADAPTED_FROM]->(s:Source)
+                OPTIONAL MATCH (a)-[:IN_GENRE]->(genre:Genre)
                 WITH a, 
                     COLLECT(DISTINCT r.name) AS ratings, 
                     COLLECT(DISTINCT t.name) AS types, 
@@ -296,24 +315,30 @@ class Chat:
             
             print(f"Searching for anime recommendations...")
             
-            # Execute the fallback query to ensure we get results
+            # Execute the query
             with self.neo4j_driver.session() as session:
                 try:
-                    # First try the vector query if we have it
+                    # First try the genre-filtered query if we have preferences
                     if has_genre_preferences:
                         query = """
-                            MATCH (a:Anime)-[:IN_GENRE]->(g:Genre)
+                            MATCH (a:Anime)
+                            OPTIONAL MATCH (a)-[:IN_GENRE]->(g:Genre)
                             WHERE g.name IN $preferred_genres
-                            WITH DISTINCT a
-                            OPTIONAL MATCH (a)-[:HAS_RATING]->(r:Rating),
-                                        (a)-[:IS_TYPE]->(t:Type),
-                                        (a)-[:ADAPTED_FROM]->(s:Source),
-                                        (a)-[:IN_GENRE]->(genre:Genre)
-                            RETURN a, 0.9 as similarity, 
+                            WITH a, COUNT(DISTINCT g) AS genre_matches
+                            WHERE genre_matches > 0
+                            OPTIONAL MATCH (a)-[:HAS_RATING]->(r:Rating)
+                            OPTIONAL MATCH (a)-[:IS_TYPE]->(t:Type)
+                            OPTIONAL MATCH (a)-[:ADAPTED_FROM]->(s:Source)
+                            OPTIONAL MATCH (a)-[:IN_GENRE]->(genre:Genre)
+                            WITH a, 
                                 COLLECT(DISTINCT r.name) AS ratings, 
                                 COLLECT(DISTINCT t.name) AS types, 
                                 COLLECT(DISTINCT s.name) AS sources, 
-                                COLLECT(DISTINCT genre.name) AS genres
+                                COLLECT(DISTINCT genre.name) AS genres,
+                                genre_matches
+                            RETURN a, 0.9 + (0.05 * genre_matches) as similarity, 
+                                ratings, types, sources, genres
+                            ORDER BY similarity DESC
                             LIMIT 20
                         """
                         result = session.run(
@@ -326,28 +351,57 @@ class Chat:
                     
                     results = [record.data() for record in result]
                     print(f"Found {len(results)} anime matches")
+                    
+                    # Log the first result to debug the structure
+                    if results:
+                        print(f"Sample result keys: {list(results[0].keys())}")
+                        print(f"Sample anime properties: {list(results[0]['a'].keys())}")
+                        print(f"Sample ratings: {results[0].get('ratings', [])}")
+                        print(f"Sample types: {results[0].get('types', [])}")
+                        print(f"Sample sources: {results[0].get('sources', [])}")
+                        print(f"Sample genres: {results[0].get('genres', [])}")
+                    
                 except Exception as e:
-                    print(f"Vector query failed: {str(e)}, using fallback query")
+                    print(f"Query failed: {str(e)}, using fallback query")
                     result = session.run(fallback_query)
                     results = [record.data() for record in result]
             
-            # If we have no results, try the fallback
+            # If we have no results, try a simpler query without relationships
             if not results:
-                print("No results, using fallback query")
+                print("No results, using simple fallback query")
                 with self.neo4j_driver.session() as session:
-                    result = session.run(fallback_query)
+                    simple_query = """
+                        MATCH (a:Anime)
+                        RETURN a, 0.9 as similarity, 
+                            [] AS ratings, [] AS types, [] AS sources, [] AS genres
+                        LIMIT 20
+                    """
+                    result = session.run(simple_query)
                     results = [record.data() for record in result]
-                print(f"Found {len(results)} anime matches with fallback query")
+                print(f"Found {len(results)} anime matches with simple fallback query")
 
-            # Refine and rank results
+            # Refine and rank results with better error handling
             recommendations = []
             for result in results:
                 anime_data = result["a"]
                 
-                # Make sure genres is a list
+                # Make sure we have values or use defaults
+                ratings = result.get("ratings", [])
+                types = result.get("types", [])
+                sources = result.get("sources", [])
                 genres = result.get("genres", [])
-                if not genres:
-                    genres = []
+                
+                # Ensure all values are lists
+                if not isinstance(ratings, list): ratings = []
+                if not isinstance(types, list): types = []
+                if not isinstance(sources, list): sources = []
+                if not isinstance(genres, list): genres = []
+                
+                # Set default values if lists are empty
+                if not ratings: ratings = ["Not Specified"]
+                if not types: types = ["TV"]  # Default to TV
+                if not sources: sources = ["Original"]
+                if not genres: genres = ["Drama"]  # Default generic genre
                 
                 recommendations.append({
                     "anime_id": anime_data.get("anime_id", ""),
@@ -361,9 +415,9 @@ class Chat:
                     "status": anime_data.get("status", ""),
                     "duration": anime_data.get("duration", ""),
                     "no_episodes": anime_data.get("no_episodes", ""),
-                    "rating": result.get("ratings", []),
-                    "type": result.get("types", []),
-                    "sourced_from": result.get("sources", []),
+                    "rating": ratings,
+                    "type": types,
+                    "sourced_from": sources,
                     "genres": genres
                 })
 
