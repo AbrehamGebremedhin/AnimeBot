@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
     SAVING_ANSWERS,
 ) = range(3)
 
-# API configuration - Fix to use the correct environment variable 
 API_BASE_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
 
 # Question categories
