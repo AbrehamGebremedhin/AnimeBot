@@ -621,8 +621,11 @@ class Chat:
         """Get previously recommended anime IDs for a user"""
         try:
             with self.neo4j_driver.session() as session:
+                # Modified query to get only anime recommended in the last 30 days
+                # This prevents the list from growing too large over time
                 query = """
-                MATCH (u:User {user_id: $user_id})-[:RECEIVED_RECOMMENDATION]->(a:Anime)
+                MATCH (u:User {user_id: $user_id})-[r:RECEIVED_RECOMMENDATION]->(a:Anime)
+                WHERE r.timestamp > (timestamp() - (30 * 24 * 60 * 60 * 1000)) 
                 RETURN a.anime_id as anime_id
                 UNION
                 MATCH (u:User {user_id: $user_id})-[:MENTIONED_IN_CHAT {sentiment: 'negative'}]->(a:Anime)
@@ -653,15 +656,18 @@ class Chat:
 
     def diversify_recommendations(self, recommendations):
         """Ensure diversity in recommendations by prioritizing different genres"""
-        if not recommendations or len(recommendations) < 5:
+        if not recommendations or len(recommendations) < 3:
             return recommendations
             
-        # Helper function to calculate genre diversity score
+        # Helper function to calculate genre diversity score with stronger weighting
         def genre_diversity_score(rec, selected_genres):
             rec_genres = rec.get("genres", [])
             # Higher score for anime with genres we haven't recommended yet
-            new_genres = sum(1 for g in rec_genres if g not in selected_genres)
-            return new_genres
+            new_genres = sum(2 for g in rec_genres if g not in selected_genres)
+            # Penalty for having too many already-seen genres
+            overlap = sum(1 for g in rec_genres if g in selected_genres)
+            # Final score balances new genres against overlap
+            return new_genres - (0.5 * overlap)
         
         diversified = []
         selected_genres = set()
@@ -680,11 +686,16 @@ class Chat:
             for rec in remaining:
                 rec["diversity_score"] = genre_diversity_score(rec, selected_genres)
             
-            # Sort by a combination of similarity and diversity
-            remaining.sort(key=lambda x: (x["similarity"] * 0.7) + (x["diversity_score"] * 0.3), reverse=True)
+            # Sort by a combination of similarity and diversity with stronger diversity weight
+            remaining.sort(key=lambda x: (x["similarity"] * 0.6) + (x["diversity_score"] * 0.4), reverse=True)
             
             # Take the top after resorting
             next_rec = remaining.pop(0)
+            
+            # Skip if diversity score is too low (indicating too much genre overlap)
+            if next_rec["diversity_score"] <= 0 and len(diversified) >= 5:
+                continue
+                
             diversified.append(next_rec)
             
             # Update selected genres
@@ -874,10 +885,28 @@ class Chat:
         Returns:
             set: Set of recently recommended genres
         """
-        # This would require an additional query to get genres for each anime ID
-        # For simplicity, we'll use the in-memory genres from this session
-        # A more complete implementation would query the database for genres
-        return set()
+        # Get genres from our Neo4j database for recently recommended anime
+        genres = set()
+        try:
+            with self.neo4j_driver.session() as session:
+                # Get genres for our recently recommended anime
+                if self.recent_recommendations:
+                    query = """
+                    MATCH (a:Anime)
+                    WHERE a.anime_id IN $anime_ids
+                    RETURN a.genres as genres
+                    """
+                    result = session.run(query, {"anime_ids": self.recent_recommendations[:20]})
+                    for record in result:
+                        if record["genres"]:
+                            # Add all genres to our set
+                            anime_genres = record["genres"]
+                            if isinstance(anime_genres, list):
+                                genres.update(anime_genres)
+        except Exception as e:
+            print(f"Error getting recent recommendation genres: {str(e)}")
+        
+        return genres
 
     async def store_recommendations_sync(self, user_id, anime_ids):
         """Store recommendations for a user synchronously (wait for completion)"""
