@@ -9,6 +9,7 @@ from .rest.tasks import tasks_router
 from .utils.neo4j_connection import Neo4jConnection
 from .middleware.rate_limiter import RateLimiter
 from .middleware.request_monitor import RequestMonitorMiddleware
+from app.rest.maintenance import maintenance_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -88,6 +89,7 @@ app.include_router(profile_router, tags=["profile"])
 app.include_router(chat_router, tags=["chat"])
 app.include_router(health_router, tags=["health"])
 app.include_router(tasks_router, tags=["tasks"])
+app.include_router(maintenance_router)
 
 @app.get("/")
 async def root():
