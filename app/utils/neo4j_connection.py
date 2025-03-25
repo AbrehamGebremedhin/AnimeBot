@@ -30,10 +30,14 @@ class Neo4jConnection:
         self.NEO4J_PASSWORD = os.getenv('NEO4J_PASSWORD')
         self.AUTH = (self.NEO4J_USERNAME, self.NEO4J_PASSWORD)
         
-        # Connection pool settings (adjustable based on workload)
+        # Connection pool settings for high concurrency
         self.max_connection_lifetime = 3600  # 1 hour
-        self.max_connection_pool_size = 50
+        self.max_connection_pool_size = 100  # Increased for high concurrency
         self.connection_acquisition_timeout = 60
+        
+        # Add additional connection pooling settings
+        self.max_transaction_retry_time = 30.0
+        self.connection_timeout = 30.0
         
         self.driver = None
         self.async_driver = None
@@ -49,7 +53,9 @@ class Neo4jConnection:
                     auth=self.AUTH,
                     max_connection_lifetime=self.max_connection_lifetime,
                     max_connection_pool_size=self.max_connection_pool_size,
-                    connection_acquisition_timeout=self.connection_acquisition_timeout
+                    connection_acquisition_timeout=self.connection_acquisition_timeout,
+                    max_transaction_retry_time=self.max_transaction_retry_time,
+                    connection_timeout=self.connection_timeout
                 )
                 
                 # Initialize the async driver with the same settings
@@ -58,7 +64,9 @@ class Neo4jConnection:
                     auth=self.AUTH,
                     max_connection_lifetime=self.max_connection_lifetime,
                     max_connection_pool_size=self.max_connection_pool_size,
-                    connection_acquisition_timeout=self.connection_acquisition_timeout
+                    connection_acquisition_timeout=self.connection_acquisition_timeout,
+                    max_transaction_retry_time=self.max_transaction_retry_time,
+                    connection_timeout=self.connection_timeout
                 )
                 
                 # Verify connection

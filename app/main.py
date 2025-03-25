@@ -4,7 +4,11 @@ import asyncio
 import logging
 from .db.database import init_db
 from .rest.routes import user_router, profile_router, chat_router
+from .rest.health import health_router
+from .rest.tasks import tasks_router
 from .utils.neo4j_connection import Neo4jConnection
+from .middleware.rate_limiter import RateLimiter
+from .middleware.request_monitor import RequestMonitorMiddleware
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -25,6 +29,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add request monitoring middleware
+app.add_middleware(RequestMonitorMiddleware)
+
+# Add rate limiting middleware
+app.add_middleware(RateLimiter, requests_per_minute=120)  # Adjust as needed
 
 # Variable to track if database has been initialized
 db_initialized = False
@@ -76,6 +86,8 @@ async def shutdown_event():
 app.include_router(user_router, tags=["users"])
 app.include_router(profile_router, tags=["profile"])
 app.include_router(chat_router, tags=["chat"])
+app.include_router(health_router, tags=["health"])
+app.include_router(tasks_router, tags=["tasks"])
 
 @app.get("/")
 async def root():
