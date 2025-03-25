@@ -119,3 +119,31 @@ class Neo4jConnection:
                 
         except Exception as e:
             logger.error(f"Error while closing Neo4j connections: {str(e)}")
+
+    async def clean_old_recommendations(self, older_than_days=30):
+        """
+        Clean old recommendation relationships to prevent recommendation staleness
+        
+        Args:
+            older_than_days (int): Remove recommendations older than this many days
+        """
+        try:
+            current_time = int(time.time() * 1000)  # Current time in milliseconds
+            time_threshold = current_time - (older_than_days * 24 * 60 * 60 * 1000)  # Convert days to milliseconds
+            
+            async with self.get_async_driver().session() as session:
+                query = """
+                MATCH (u:User)-[r:RECEIVED_RECOMMENDATION]->(a:Anime)
+                WHERE r.timestamp < $time_threshold
+                DELETE r
+                RETURN count(r) as deleted_count
+                """
+                result = await session.run(query, {"time_threshold": time_threshold})
+                record = await result.single()
+                deleted_count = record["deleted_count"] if record else 0
+                
+                logging.info(f"Cleaned {deleted_count} old recommendation relationships")
+                return deleted_count
+        except Exception as e:
+            logging.error(f"Error cleaning old recommendations: {str(e)}")
+            return 0

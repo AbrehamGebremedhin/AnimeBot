@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status, FastAPI
+from fastapi import APIRouter, HTTPException, Depends, status, FastAPI, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import asyncio
@@ -15,6 +15,7 @@ from ..chat_processor.chatbot import Chat
 from ..chat_processor.user_management import UserService
 from ..utils.mal_api import API_CALL
 from ..db.sqlite_service import SQLiteService  # Import SQLiteService
+from app.utils.diversity_service import DiversityService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -172,6 +173,69 @@ async def chat_with_bot(chat_request: ChatRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred while processing the chat request: {str(e)}"
         )
+
+@chat_router.post("/fresh-recommendations")
+async def get_fresh_recommendations(
+    user_data: dict,
+    background_tasks: BackgroundTasks
+):
+    """
+    Get fresh anime recommendations, ensuring no repeats from previous recommendations
+    """
+    try:
+        user_id = user_data.get("user_id", "")
+        if not user_id:
+            return {"error": "User ID is required"}
+            
+        # Clear previous recommendations for this user
+        neo4j_connection = Neo4jConnection()
+        diversity_service = DiversityService(neo4j_connection)
+        
+        # Clear in background to not delay response
+        background_tasks.add_task(clear_user_recent_recommendations, user_id)
+        
+        # Get recommendations through regular endpoint
+        chat_instance = await Chat(user_id).initialize()
+        user_profile = await chat_instance.user_service.get_user_profile(user_id)
+        
+        # Get recommendations
+        recommendations = await chat_instance.similarity_search(user_profile)
+        
+        return recommendations
+        
+    except Exception as e:
+        logger.error(f"Error getting fresh recommendations: {str(e)}")
+        return {"error": f"Failed to get recommendations: {str(e)}"}
+
+async def clear_user_recent_recommendations(user_id: str, days: int = 1):
+    """
+    Clear only recent recommendations (last day) to allow for fresh recommendations
+    while preserving longer-term history
+    """
+    try:
+        neo4j_connection = Neo4jConnection()
+        
+        current_time = int(time.time() * 1000)  # Current time in milliseconds
+        time_threshold = current_time - (days * 24 * 60 * 60 * 1000)  # Last day
+        
+        async with neo4j_connection.get_async_driver().session() as session:
+            query = """
+            MATCH (u:User {user_id: $user_id})-[r:RECEIVED_RECOMMENDATION]->(a:Anime)
+            WHERE r.timestamp > $time_threshold
+            DELETE r
+            RETURN count(r) as deleted_count
+            """
+            result = await session.run(query, {
+                "user_id": user_id,
+                "time_threshold": time_threshold
+            })
+            record = await result.single()
+            deleted_count = record["deleted_count"] if record else 0
+            
+            logger.info(f"Cleared {deleted_count} recent recommendations for user {user_id}")
+            
+    except Exception as e:
+        logger.error(f"Error clearing recent recommendations: {str(e)}")
 
 # Helper functions (these would need to be implemented with your actual database logic)
 async def get_all_users():
