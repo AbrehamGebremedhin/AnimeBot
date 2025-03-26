@@ -4,6 +4,7 @@ import logging
 import asyncio
 import aiohttp  # Use aiohttp instead of requests for async
 import requests
+import threading
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -624,14 +625,9 @@ async def send_message(update: Update, context: ContextTypes.DEFAULT_TYPE, text:
     else:
         await update.message.reply_text(text, reply_markup=reply_markup)
 
-def start_bot():
-    """Start the bot as a separate process that can be called from another module."""
-    logger.info("Starting Telegram bot...")
-    
-    if not BOT_TOKEN:
-        logger.error("Telegram bot token not found! Cannot start bot.")
-        return
-        
+# This async function will run the bot
+async def _run_telegram_bot():
+    """Run the Telegram bot asynchronously."""
     try:
         # Create the Application
         application = Application.builder().token(BOT_TOKEN).build()
@@ -640,7 +636,7 @@ def start_bot():
         application.add_handler(CommandHandler("start", start_command))
         application.add_handler(CommandHandler("help", help_command))
         
-        # Add conversation handler for profile setup
+        # Add conversation handler with per_message=True
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler("start", start)],
             states={
@@ -658,26 +654,57 @@ def start_bot():
             fallbacks=[CommandHandler("cancel", cancel)],
             name="profile_setup",
             persistent=False,
+            per_message=True,  # Fix the tracking warning
         )
         
-        # Add handlers to the application
+        # Add handlers
         application.add_handler(conv_handler)
         application.add_handler(CommandHandler("recommend", recommend))
         application.add_handler(CallbackQueryHandler(handle_anime_callback, pattern=r"^(details|synopsis|similar|favorite)_\d+_\d+$"))
-        
-        # Add message handler last (lowest priority)
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
         
-        # Start the bot (non-blocking)
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        # Start the bot
+        await application.initialize()
+        await application.start()
+        
+        logger.info("Starting Telegram bot polling...")
+        await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
         logger.info("Telegram bot started successfully")
+        
+        # Run until process is stopped
+        await application.updater.idle()
     except Exception as e:
         logger.error(f"Failed to start Telegram bot: {str(e)}")
 
+def start_bot():
+    """Start the bot in a non-blocking way that can be called from another module."""
+    logger.info("Starting Telegram bot...")
+    
+    if not BOT_TOKEN:
+        logger.error("Telegram bot token not found! Cannot start bot.")
+        return
+    
+    def _run_bot_in_thread():
+        """Run the Telegram bot in a separate thread."""
+        try:
+            # Set up an event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Run the main bot function in the event loop
+            loop.run_until_complete(_run_telegram_bot())
+        except Exception as e:
+            logger.error(f"Error in Telegram bot thread: {str(e)}")
+    
+    # Start the bot in a separate thread
+    thread = threading.Thread(target=_run_bot_in_thread, daemon=True)
+    thread.start()
+    logger.info("Telegram bot thread started")
+
 def main() -> None:
     """Start the bot in a standard way when run directly."""
-    # Just call start_bot to avoid code duplication
-    start_bot()
+    # Create an event loop and run the async function
+    asyncio.run(_run_telegram_bot())
 
 if __name__ == "__main__":
     main()
