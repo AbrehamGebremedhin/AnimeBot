@@ -26,6 +26,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Get the token from the environment variable
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+if not BOT_TOKEN:
+    logger.error("Telegram bot token not found! Please set TELEGRAM_BOT_TOKEN in your .env file.")
+
 # States for conversation handler
 (
     SELECTING_CATEGORY,
@@ -36,7 +41,6 @@ logger = logging.getLogger(__name__)
 API_BASE_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
 
 logging.info(f"BACKEND_API_URL: {os.getenv('BACKEND_API_URL')}")
-
 logging.info(f"API_BASE_URL: {API_BASE_URL}")
 
 # Question categories
@@ -51,6 +55,51 @@ CATEGORIES = [
     "cultural_and_thematic_interests",
     "mood_and_emotional_preferences"
 ]
+
+# These command handlers are needed for the start_bot function
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a message when the command /start is issued."""
+    await update.message.reply_text(
+        "Hi! I'm your Anime Bot. Use /start to set up your profile or /recommend to get anime recommendations."
+    )
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a message when the command /help is issued."""
+    await update.message.reply_text(
+        "Here's how you can use me:\n"
+        "/start - Set up your profile\n"
+        "/recommend - Get anime recommendations\n"
+        "/help - Show this help message\n"
+        "You can also chat with me about anime!"
+    )
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle regular messages from users."""
+    user_id = str(update.effective_user.id)
+    message = update.message.text
+    
+    try:
+        # Call the chat API
+        url = f"{API_BASE_URL}/chat/"
+        data = {
+            "user_id": user_id,
+            "reply": message
+        }
+        response = requests.post(url, json=data)
+        response.raise_for_status()
+        chat_response = response.json()
+        
+        if isinstance(chat_response, dict) and "question" in chat_response:
+            await update.message.reply_text(chat_response["question"])
+        elif isinstance(chat_response, str):
+            await update.message.reply_text(chat_response)
+        else:
+            await update.message.reply_text("I'm not sure how to respond to that.")
+    except Exception as e:
+        logger.error(f"Error in handle_message: {str(e)}")
+        await update.message.reply_text(
+            "Sorry, I'm having trouble processing your message right now."
+        )
 
 # Helper Functions
 async def get_questions_for_category(user_id: str, category: str) -> List[Dict[str, Any]]:
@@ -575,51 +624,60 @@ async def send_message(update: Update, context: ContextTypes.DEFAULT_TYPE, text:
     else:
         await update.message.reply_text(text, reply_markup=reply_markup)
 
-def main() -> None:
-    """Start the bot."""
-    # Get the token from the correct environment variable
-    telegram_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+def start_bot():
+    """Start the bot as a separate process that can be called from another module."""
+    logger.info("Starting Telegram bot...")
     
-    if not telegram_token:
-        logger.error("Telegram bot token not found! Please set TELEGRAM_BOT_TOKEN in your .env file.")
+    if not BOT_TOKEN:
+        logger.error("Telegram bot token not found! Cannot start bot.")
         return
-    
-    logger.info(f"Starting bot with token: {telegram_token[:5]}...{telegram_token[-5:]}")
-    
-    # Create the Application with the correct token
-    application = Application.builder().token(telegram_token).build()
-    
-    # Add conversation handler for profile setup
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            SELECTING_CATEGORY: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, show_category_questions)
-            ],
-            ANSWERING_QUESTIONS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text),
-                CallbackQueryHandler(handle_button),
-            ],
-            SAVING_ANSWERS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, save_category_answers)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        name="profile_setup",
-        persistent=False,
-    )
-    
-    # Add handlers to the application
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("recommend", recommend))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
-    application.add_handler(CallbackQueryHandler(handle_anime_callback, pattern=r"^(details|synopsis|similar|favorite)_\d+_\d+$"))
-    
-    # Log API endpoint being used
-    logger.info(f"Using API endpoint: {API_BASE_URL}")
-    
-    # Start the Bot
-    application.run_polling()
+        
+    try:
+        # Create the Application
+        application = Application.builder().token(BOT_TOKEN).build()
+        
+        # Add command handlers
+        application.add_handler(CommandHandler("start", start_command))
+        application.add_handler(CommandHandler("help", help_command))
+        
+        # Add conversation handler for profile setup
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler("start", start)],
+            states={
+                SELECTING_CATEGORY: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, show_category_questions)
+                ],
+                ANSWERING_QUESTIONS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text),
+                    CallbackQueryHandler(handle_button),
+                ],
+                SAVING_ANSWERS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, save_category_answers)
+                ],
+            },
+            fallbacks=[CommandHandler("cancel", cancel)],
+            name="profile_setup",
+            persistent=False,
+        )
+        
+        # Add handlers to the application
+        application.add_handler(conv_handler)
+        application.add_handler(CommandHandler("recommend", recommend))
+        application.add_handler(CallbackQueryHandler(handle_anime_callback, pattern=r"^(details|synopsis|similar|favorite)_\d+_\d+$"))
+        
+        # Add message handler last (lowest priority)
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        
+        # Start the bot (non-blocking)
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        logger.info("Telegram bot started successfully")
+    except Exception as e:
+        logger.error(f"Failed to start Telegram bot: {str(e)}")
+
+def main() -> None:
+    """Start the bot in a standard way when run directly."""
+    # Just call start_bot to avoid code duplication
+    start_bot()
 
 if __name__ == "__main__":
     main()
