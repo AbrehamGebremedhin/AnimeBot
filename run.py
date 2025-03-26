@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 # Initialize the FastAPI app
 app = FastAPI(title="Anime Bot API")
 
+# Add a redirect from root to docs
+from fastapi.responses import RedirectResponse
+@app.get("/")
+async def root():
+    """Redirect root to docs for better user experience"""
+    return RedirectResponse(url="/docs")
+
 # Register shutdown event
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -67,6 +74,11 @@ def start_telegram_bot():
     """
     try:
         logger.info("Starting Telegram bot...")
+        logger.info(f"Running in {'development' if is_development() else 'production'} mode")
+        
+        # Make sure the correct backend API URL is set
+        backend_api_url = os.environ.get("BACKEND_API_URL") 
+        logger.info(f"Using BACKEND_API_URL: {backend_api_url}")
         
         # Get the path to the telegramBot.py file
         script_dir = os.path.dirname(os.path.abspath(__file__))

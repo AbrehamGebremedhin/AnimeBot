@@ -5,6 +5,7 @@ import asyncio
 import aiohttp  # Use aiohttp instead of requests for async
 import requests
 import threading
+import signal
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -636,7 +637,7 @@ async def _run_telegram_bot():
         application.add_handler(CommandHandler("start", start_command))
         application.add_handler(CommandHandler("help", help_command))
         
-        # Add conversation handler with per_message=True
+        # Add conversation handler - fix per_message setting
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler("start", start)],
             states={
@@ -654,7 +655,6 @@ async def _run_telegram_bot():
             fallbacks=[CommandHandler("cancel", cancel)],
             name="profile_setup",
             persistent=False,
-            per_message=True,  # Fix the tracking warning
         )
         
         # Add handlers
@@ -671,8 +671,35 @@ async def _run_telegram_bot():
         await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
         logger.info("Telegram bot started successfully")
         
-        # Run until process is stopped
-        await application.updater.idle()
+        # Replace idle() with a method to keep the event loop running
+        # Create a future that will never be set to keep the event loop running
+        stop_signal = asyncio.Future()
+        
+        # Define a signal handler to handle graceful shutdown
+        def signal_handler():
+            stop_signal.set_result(None)
+            
+        # Register signal handlers for graceful shutdown
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, signal_handler)
+            except NotImplementedError:
+                # Windows doesn't support signals fully
+                pass
+                
+        # Wait until stop signal is received
+        logger.info("Bot is running. Press Ctrl+C to stop")
+        try:
+            await stop_signal
+        except asyncio.CancelledError:
+            pass
+            
+        # Properly shutdown
+        logger.info("Stopping bot...")
+        await application.stop()
+        logger.info("Bot stopped")
+        
     except Exception as e:
         logger.error(f"Failed to start Telegram bot: {str(e)}")
 
