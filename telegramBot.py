@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import asyncio
+import aiohttp  # Use aiohttp instead of requests for async
 import requests
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
@@ -17,7 +18,7 @@ from telegram.ext import (
 )
 
 # Load environment variables
-load_dotenv()
+load_dotenv('.env')
 
 # Enable logging
 logging.basicConfig(
@@ -34,6 +35,10 @@ logger = logging.getLogger(__name__)
 
 API_BASE_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
 
+logging.info(f"BACKEND_API_URL: {os.getenv('BACKEND_API_URL')}")
+
+logging.info(f"API_BASE_URL: {API_BASE_URL}")
+
 # Question categories
 CATEGORIES = [
     "user_info",
@@ -48,7 +53,7 @@ CATEGORIES = [
 ]
 
 # Helper Functions
-async def get_questions_for_category(user_id: int, category: str) -> List[Dict[str, Any]]:
+async def get_questions_for_category(user_id: str, category: str) -> List[Dict[str, Any]]:
     """Fetch questions for a specific category from the API."""
     try:
         url = f"{API_BASE_URL}/profile/questions?user_id={user_id}&category={category}"
@@ -59,7 +64,7 @@ async def get_questions_for_category(user_id: int, category: str) -> List[Dict[s
         logger.error(f"Error fetching questions: {e}")
         return []
 
-async def update_user_profile(user_id: int, category: str, answers: Dict[str, Any]) -> bool:
+async def update_user_profile(user_id: str, category: str, answers: Dict[str, Any]) -> bool:
     """Update user profile with answers to questions."""
     try:
         url = f"{API_BASE_URL}/profile/update"
@@ -75,32 +80,90 @@ async def update_user_profile(user_id: int, category: str, answers: Dict[str, An
         logger.error(f"Error updating profile: {e}")
         return False
 
-async def create_user_if_not_exists(user_id: int, username: str) -> bool:
+async def create_user_if_not_exists(user_id: str, username: str) -> bool:
     """Create a new user if one doesn't exist."""
     try:
-        url = f"{API_BASE_URL}/users/"
-        data = {
-            "username": username
-        }
-        # First check if user exists by trying to get profile
-        try:
-            profile_url = f"{API_BASE_URL}/profile/questions?user_id={user_id}&category=user_info"
-            requests.get(profile_url)
-            return True  # User exists
-        except:
-            # Create new user
-            response = requests.post(url, json=data)
-            response.raise_for_status()
-            return True
+        # Use aiohttp for async HTTP requests
+        async with aiohttp.ClientSession() as session:
+            # Check if user exists in both databases using the exists endpoint
+            exists_url = f"{API_BASE_URL}/users/exists/{user_id}"
+            
+            logging.info(f"Checking if user {user_id} exists at URL: {exists_url}")
+            
+            try:
+                async with session.get(exists_url) as response:
+                    if response.status == 200:
+                        response_json = await response.json()
+                        logging.info(f"User exists check result: {response_json}")
+                        
+                        # Only return True if the user exists in both databases
+                        if response_json.get("exists", False):
+                            logging.info(f"User {user_id} already exists in both databases")
+                            return True
+                        else:
+                            logging.info(f"User {user_id} not found in one or both databases - will create")
+                    else:
+                        response_text = await response.text()
+                        logging.warning(f"Unexpected status code when checking user: {response.status}, response: {response_text[:100]}")
+            except Exception as e:
+                logging.error(f"Error checking if user exists: {e}")
+            
+            # Create new user with username as user_id
+            url = f"{API_BASE_URL}/users/"
+            data = {
+                "username": username,
+                "user_id": user_id  # Use the actual user_id
+            }
+            
+            logging.info(f"Creating new user with data: {data} at URL: {url}")
+            
+            try:
+                # Add more detailed error handling
+                async with session.post(url, json=data) as response:
+                    response_text = await response.text()
+                    logging.info(f"User creation response status: {response.status}, body: {response_text}")
+                    
+                    # Consider both 200 and 201 as success, plus also handle cases where
+                    # the API returns an error but the user was actually created
+                    if response.status in (200, 201):
+                        logging.info(f"Successfully created user {user_id} ({username})")
+                        return True
+                    else:
+                        # Check if the user exists anyway despite the error
+                        async with session.get(exists_url) as check_response:
+                            if check_response.status == 200:
+                                check_json = await check_response.json()
+                                if check_json.get("exists", False):
+                                    logging.info(f"User {user_id} exists despite API error - continuing")
+                                    return True
+                                
+                        logging.error(f"Failed to create user. Status: {response.status}, Response: {response_text}")
+                        return False
+            except Exception as e:
+                logging.error(f"Error creating user: {e}")
+                
+                # Even if there was an exception, check if the user was created
+                try:
+                    async with session.get(exists_url) as check_response:
+                        if check_response.status == 200:
+                            check_json = await check_response.json()
+                            if check_json.get("exists", False):
+                                logging.info(f"User {user_id} exists despite exception - continuing")
+                                return True
+                except Exception as check_error:
+                    logging.error(f"Error checking if user exists after creation error: {check_error}")
+                
+                return False
     except Exception as e:
-        logger.error(f"Error creating user: {e}")
+        logging.error(f"Error in create_user_if_not_exists: {e}")
         return False
 
 # Command Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Start the conversation and create user if needed."""
     user = update.effective_user
-    user_id = user.id
+    user_id = str(user.id)  # Convert to string
+    logging.info(f"User {user_id} started the conversation.")
     username = user.username or f"tg_user_{user_id}"
     
     await update.message.reply_text(
@@ -288,7 +351,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def recommend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the recommend command."""
-    user_id = update.effective_user.id
+    user_id = str(update.effective_user.id)  # Convert to string
     
     await update.message.reply_text("Finding the perfect anime for you...")
     
@@ -480,7 +543,7 @@ async def handle_anime_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle regular chat messages."""
-    user_id = update.effective_user.id
+    user_id = str(update.effective_user.id)  # Convert to string
     message = update.message.text
     
     try:

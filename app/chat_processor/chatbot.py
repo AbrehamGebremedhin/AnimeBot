@@ -631,7 +631,7 @@ class Chat:
                 MATCH (u:User {user_id: $user_id})-[:MENTIONED_IN_CHAT {sentiment: 'negative'}]->(a:Anime)
                 RETURN a.anime_id as anime_id
                 """
-                result = session.run(query, {"user_id": str(user_id)})
+                result = session.run(query, {"user_id": user_id})
                 return [record["anime_id"] for record in result]
         except Exception as e:
             print(f"Error getting previous recommendations: {str(e)}")
@@ -649,7 +649,7 @@ class Chat:
                     MERGE (u)-[r:RECEIVED_RECOMMENDATION]->(a)
                     SET r.timestamp = timestamp()
                     """
-                    session.run(query, {"user_id": str(user_id), "anime_id": str(anime_id)})
+                    session.run(query, {"user_id": user_id, "anime_id": str(anime_id)})
             print(f"Stored {len(anime_ids)} recommendations for user {user_id}")
         except Exception as e:
             print(f"Error storing recommendations: {str(e)}")
@@ -860,7 +860,7 @@ class Chat:
                     MERGE (u)-[r:MENTIONED_IN_CHAT]->(a)
                     SET r.timestamp = timestamp()
                     """
-                    session.run(query, {"user_id": str(user_id), "title": title})
+                    session.run(query, {"user_id": user_id, "title": title})
             print(f"Stored {len(anime_titles)} chat mentions for user {user_id}")
         except Exception as e:
             print(f"Error storing chat mentions: {str(e)}")
@@ -921,7 +921,7 @@ class Chat:
                         MERGE (u)-[r:RECEIVED_RECOMMENDATION]->(a)
                         SET r.timestamp = timestamp()
                         """
-                        tx.run(query, {"user_id": str(user_id), "anime_id": str(anime_id)})
+                        tx.run(query, {"user_id": user_id, "anime_id": str(anime_id)})
                     
                     # Commit the transaction explicitly
                     tx.commit()

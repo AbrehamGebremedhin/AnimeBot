@@ -151,4 +151,4 @@ if __name__ == "__main__":
     threading.Thread(target=start_telegram_bot, daemon=True).start()
     
     # Start the API server
-    uvicorn.run("run:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("run:app", host="0.0.0.0", port=8050, reload=True)
