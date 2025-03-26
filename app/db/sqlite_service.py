@@ -27,13 +27,13 @@ class SQLiteService:
     async def create_user(self, username: str) -> User:
         """Create a new user with the given username"""
         async with self.async_session() as session:
-            new_user = User(username=username)
+            new_user = User(username=username, id=username)
             session.add(new_user)
             await session.commit()
             await session.refresh(new_user)
             return new_user
     
-    async def get_user_by_id(self, user_id: int) -> Optional[User]:
+    async def get_user_by_id(self, user_id: str) -> Optional[User]:
         """Get a user by their ID"""
         async with self.async_session() as session:
             result = await session.execute(select(User).where(User.id == user_id))
@@ -51,7 +51,7 @@ class SQLiteService:
             result = await session.execute(select(User))
             return result.scalars().all()
     
-    async def update_username(self, user_id: int, new_username: str) -> Optional[User]:
+    async def update_username(self, user_id: str, new_username: str) -> Optional[User]:
         """Update a user's username"""
         async with self.async_session() as session:
             user = await session.get(User, user_id)
@@ -61,7 +61,7 @@ class SQLiteService:
                 return user
             return None
     
-    async def delete_user(self, user_id: int) -> bool:
+    async def delete_user(self, user_id: str) -> bool:
         """Delete a user by their ID"""
         async with self.async_session() as session:
             user = await session.get(User, user_id)

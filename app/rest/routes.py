@@ -7,6 +7,7 @@ from functools import partial
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 import logging
+import time
 
 from ..db.models import User
 from ..db.database import get_db  # Assuming you have a database connection utility
@@ -16,6 +17,7 @@ from ..chat_processor.user_management import UserService
 from ..utils.mal_api import API_CALL
 from ..db.sqlite_service import SQLiteService  # Import SQLiteService
 from app.utils.diversity_service import DiversityService
+from ..utils.neo4j_connection import Neo4jConnection  # Import Neo4jConnection
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -32,28 +34,29 @@ thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 # Pydantic models
 class UserCreate(BaseModel):
     username: str
+    user_id: Optional[str] = None
     
     class Config:
         orm_mode = True
 
 class UserResponse(BaseModel):
-    id: int
+    id: str
     username: str
     
     class Config:
         orm_mode = True
 
 class ProfileRequest(BaseModel):
-    user_id: int
+    user_id: str
     category: str
 
 class ProfileUpdateRequest(BaseModel):
-    user_id: int
+    user_id: str
     category: str
     fields: Dict[str, Any]
 
 class ChatRequest(BaseModel):
-    user_id: int
+    user_id: str
     reply: Optional[str] = ""
 
 # Database initialization
@@ -97,25 +100,85 @@ async def list_users(db: AsyncSession = Depends(get_db)):
 async def create_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
     """Create a new user"""
     try:
-        # Create user in SQL database
-        db_user = User(username=user.username)
-        db.add(db_user)
-        await db.commit()
-        await db.refresh(db_user)
+        # Ensure user_id is not None
+        if user.user_id is None:
+            user.user_id = user.username
         
-        # Create user in Neo4j graph database
+        # Ensure user_id is string
+        user_id = str(user.user_id)
+        
+        # Check if user already exists in SQL database
+        result = await db.execute(select(User).where(User.id == user_id))
+        existing_user = result.scalars().first()
+        
+        # Check if user exists in Neo4j
         user_service = UserService()
-        await user_service.create_user(user_id=db_user.id, username=db_user.username)
+        neo4j_user_exists = False
+        try:
+            neo4j_user_exists = await user_service.user_exists(user_id)
+            logger.info(f"Neo4j user exists check: {neo4j_user_exists} for user_id {user_id}")
+        except Exception as e:
+            logger.error(f"Error checking Neo4j user: {str(e)}")
         
-        return db_user
+        if existing_user and neo4j_user_exists:
+            logger.info(f"User already exists in both databases: {existing_user.id}")
+            # Ensure ID is returned as string
+            return UserResponse(id=str(existing_user.id), username=existing_user.username)
+            
+        # Create or update user in SQL database if needed
+        if not existing_user:
+            logger.info(f"Creating new SQL user: {user_id}")
+            db_user = User(username=user.username, id=user_id)
+            db.add(db_user)
+            await db.commit()
+            await db.refresh(db_user)
+            logger.info(f"SQL user created with ID: {db_user.id}, username: {db_user.username}")
+        else:
+            db_user = existing_user
+            logger.info(f"SQL user already exists: {db_user.id}")
+        
+        # Create user in Neo4j graph database if needed
+        if not neo4j_user_exists:
+            try:
+                await user_service.create_user(user_id=user_id, username=user.username)
+                logger.info(f"Neo4j user created successfully for user ID: {user_id}")
+            except Exception as neo4j_error:
+                logger.error(f"Neo4j user creation failed for user ID: {user_id} - {str(neo4j_error)}")
+                # Don't fail the request if Neo4j user creation fails
+        else:
+            logger.info(f"Neo4j user already exists for user ID: {user_id}")
+        
+        # Ensure ID is returned as string
+        return UserResponse(id=str(db_user.id), username=db_user.username)
     except Exception as e:
         await db.rollback()
         logger.error(f"Error creating user: {str(e)}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
+@user_router.get("/exists/{user_id}")
+async def check_user_exists(user_id: str, db: AsyncSession = Depends(get_db)):
+    """Check if a user exists in both SQLite and Neo4j databases"""
+    try:
+        # Check SQLite database
+        result = await db.execute(select(User).where(User.id == user_id))
+        sqlite_user = result.scalars().first()
+        
+        # Check Neo4j database
+        user_service = UserService()
+        neo4j_user = await user_service.user_exists(user_id)
+        
+        return {
+            "exists": bool(sqlite_user and neo4j_user),
+            "sqlite_exists": bool(sqlite_user),
+            "neo4j_exists": bool(neo4j_user)
+        }
+    except Exception as e:
+        logger.error(f"Error checking user existence: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Profile routes
 @profile_router.get("/questions")
-async def get_profile_questions(user_id: int, category: str):
+async def get_profile_questions(user_id: str, category: str):
     """Get profile questions by category"""
     questions = await get_chat_questions(
         user_id=user_id,
