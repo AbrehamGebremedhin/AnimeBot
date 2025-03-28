@@ -6,7 +6,6 @@ services:
     region: ohio
     healthCheckPath: /health/liveness
     buildCommand: docker build -t animebot-backend .
-    startCommand: docker run -p $PORT:8050 -e PORT=$PORT animebot-backend
     envVars:
       - key: ENV
         value: production
