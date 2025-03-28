@@ -94,6 +94,9 @@ async def shutdown_event():
         except Exception as e:
             logger.error(f"Error shutting down Telegram bot: {str(e)}")
     
+    # Clear thread reference
+    telegram_bot_thread = None
+    
     # Close database connections
     try:
         # Close Redis connections first (important for clean shutdown)
@@ -101,6 +104,8 @@ async def shutdown_event():
         if redis_service:
             await redis_service.close()
             logger.info("Redis connection closed")
+            # Clear the reference immediately
+            redis_service = None
         
         # Then close Neo4j connections
         neo4j_connection = Neo4jConnection()
@@ -109,6 +114,9 @@ async def shutdown_event():
         # Close async driver properly
         await neo4j_connection.close_async()
         logger.info("Neo4j connection closed")
+        
+        # Clear Neo4j singleton instance to force recreation later if needed
+        Neo4jConnection._instance = None
     except Exception as e:
         logger.error(f"Error closing database connections: {str(e)}")
     
@@ -138,6 +146,13 @@ async def shutdown_event():
                     logger.error(f"Error during task cancellation: {str(e)}")
         except Exception as e:
             logger.error(f"Error waiting for tasks during shutdown: {str(e)}")
+    
+    # Suggest garbage collection to clean up resources
+    try:
+        import gc
+        gc.collect()
+    except Exception as e:
+        logger.error(f"Error during garbage collection: {str(e)}")
     
     logger.info("Application shutdown complete")
 
