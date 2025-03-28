@@ -50,16 +50,29 @@ async def root():
 
 # Global Redis service instance
 redis_service = None
+# Global Telegram bot thread instance
+telegram_bot_thread = None
 
 # Register startup event
 @app.on_event("startup")
 async def startup_event():
-    global redis_service
+    global redis_service, telegram_bot_thread
     # Initialize Redis service
     redis_service = RedisService()
     try:
         await init_db()
         logger.info("Database initialized successfully on startup")
+        
+        # Start the Telegram bot in production mode
+        if not is_development():
+            # In production, import and start the bot directly
+            try:
+                from app.bot import telegramBot
+                # Start the bot and keep track of the thread
+                telegram_bot_thread = telegramBot.start_bot()
+                logger.info("Telegram bot started successfully in production mode")
+            except Exception as e:
+                logger.error(f"Failed to start Telegram bot: {e}")
     except Exception as e:
         logger.error(f"Failed to initialize database: {str(e)}")
         raise
@@ -70,7 +83,18 @@ async def shutdown_event():
     """Clean up resources when shutting down"""
     logger.info("Shutting down application, cleaning up resources...")
     
-    # First close database connections
+    # First, shutdown the Telegram bot if it's running
+    global telegram_bot_thread
+    if telegram_bot_thread:
+        try:
+            # Import the shutdown function
+            from app.bot.telegramBot import shutdown_bot
+            # Shutdown the Telegram bot
+            shutdown_bot(telegram_bot_thread)
+        except Exception as e:
+            logger.error(f"Error shutting down Telegram bot: {str(e)}")
+    
+    # Close database connections
     try:
         # Close Redis connections first (important for clean shutdown)
         global redis_service
@@ -132,11 +156,15 @@ def start_telegram_bot():
     """
     Start the Telegram bot.
     In development: runs in a subprocess
-    In production: imports the module directly
+    In production: imports the module directly (this is now handled in startup_event)
     """
+    # Only run in development mode, as production now starts the bot in startup_event
+    if not is_development():
+        logger.info("Skipping development mode Telegram bot start since we're in production")
+        return
+        
     try:
-        logger.info("Starting Telegram bot...")
-        logger.info(f"Running in {'development' if is_development() else 'production'} mode")
+        logger.info("Starting Telegram bot in development mode...")
         
         # Make sure the correct backend API URL is set
         backend_api_url = os.environ.get("BACKEND_API_URL") 
@@ -150,54 +178,33 @@ def start_telegram_bot():
             logger.error(f"Telegram bot script not found at {bot_path}")
             return
         
-        if is_development():
-            # In development, run as subprocess for easier debugging
-            logger.info("Starting Telegram bot in development mode (subprocess)")
-            bot_process = subprocess.Popen(
-                [sys.executable, "-u", bot_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1
-            )
-            
-            # Log stdout and stderr
-            def log_output(stream, log_func):
-                for line in stream:
-                    log_func(f"[TelegramBot] {line.strip()}")
-            
-            # Start threads to log output
-            threading.Thread(target=log_output, args=(bot_process.stdout, logger.info), daemon=True).start()
-            threading.Thread(target=log_output, args=(bot_process.stderr, logger.error), daemon=True).start()
-            
-            # Monitor the process
-            def monitor_process():
-                return_code = bot_process.wait()
-                if return_code != 0:
-                    logger.error(f"Telegram bot process exited with code {return_code}")
-            
-            threading.Thread(target=monitor_process, daemon=True).start()
-        else:
-            # In production (like on Render), import and run directly
-            logger.info("Starting Telegram bot in production mode (direct import)")
-            try:
-                # Set environment variable to disable signal handling in thread
-                os.environ["PYTHONUNBUFFERED"] = "1"
-                os.environ["TELEGRAM_NO_THREAD_SIGNALS"] = "1"
-                
-                # Import the telegramBot module dynamically from the app.bot package
-                from app.bot import telegramBot as telegram_bot_module
-                
-                # Start the bot in a thread (if the module provides a start function)
-                if hasattr(telegram_bot_module, "start_bot"):
-                    threading.Thread(target=telegram_bot_module.start_bot, daemon=True).start()
-                else:
-                    logger.warning("telegramBot.py doesn't have a start_bot function. Please ensure it initializes correctly when imported.")
-            except Exception as e:
-                logger.error(f"Failed to import and start Telegram bot: {str(e)}")
-                return
-            
-        logger.info("Telegram bot started successfully")
+        # In development, run as subprocess for easier debugging
+        logger.info("Starting Telegram bot in development mode (subprocess)")
+        bot_process = subprocess.Popen(
+            [sys.executable, "-u", bot_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        
+        # Log stdout and stderr
+        def log_output(stream, log_func):
+            for line in stream:
+                log_func(f"[TelegramBot] {line.strip()}")
+        
+        # Start threads to log output
+        threading.Thread(target=log_output, args=(bot_process.stdout, logger.info), daemon=True).start()
+        threading.Thread(target=log_output, args=(bot_process.stderr, logger.error), daemon=True).start()
+        
+        # Monitor the process
+        def monitor_process():
+            return_code = bot_process.wait()
+            if return_code != 0:
+                logger.error(f"Telegram bot process exited with code {return_code}")
+        
+        threading.Thread(target=monitor_process, daemon=True).start()
+        logger.info("Telegram bot started successfully in development mode")
     except Exception as e:
         logger.error(f"Failed to start Telegram bot: {str(e)}")
 
@@ -225,25 +232,7 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Server error: {str(e)}")
     finally:
-        # Ensure any remaining tasks are properly shut down
-        try:
-            # Get any pending tasks in the default event loop
-            loop = asyncio.get_event_loop()
-            if not loop.is_closed():
-                logger.info("Closing event loop...")
-                tasks = [t for t in asyncio.all_tasks(loop) if not t.done()]
-                
-                if tasks:
-                    logger.info(f"Cancelling {len(tasks)} remaining tasks...")
-                    for task in tasks:
-                        task.cancel()
-                    
-                    # Wait briefly for tasks to acknowledge cancellation
-                    loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
-                
-                loop.close()
-                logger.info("Event loop closed")
-        except Exception as e:
-            logger.error(f"Error during final cleanup: {str(e)}")
-        
+        # Skip task cleanup as uvicorn handles this
+        # The previous errors occurred during uvicorn's own cleanup process
+        # which we shouldn't try to interfere with
         logger.info("Application shut down successfully")

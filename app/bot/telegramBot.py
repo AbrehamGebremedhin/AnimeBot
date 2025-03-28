@@ -779,15 +779,70 @@ def start_bot():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
+            # Create a flag to signal shutdown
+            shutdown_flag = threading.Event()
+            
+            # Create cancellable task for our bot
+            bot_task = None
+            
+            def shutdown_handler():
+                """Handle shutdown signal within the thread"""
+                logger.info("Telegram bot thread received shutdown signal")
+                nonlocal bot_task
+                if bot_task and not bot_task.done():
+                    logger.info("Cancelling Telegram bot task")
+                    bot_task.cancel()
+                
+                # Set the event to indicate shutdown was requested
+                shutdown_flag.set()
+                
+            # Register our custom shutdown handler that can be called from outside
+            # this will be called from the main thread when the application is shutting down
+            threading.current_thread().shutdown_handler = shutdown_handler
+            
             # Run the main bot function in the event loop
-            loop.run_until_complete(_run_telegram_bot())
+            try:
+                # Create task so we can cancel it later if needed
+                bot_task = loop.create_task(_run_telegram_bot())
+                
+                # Run until complete or cancelled
+                loop.run_until_complete(bot_task)
+            except asyncio.CancelledError:
+                logger.info("Telegram bot task was cancelled during shutdown")
+            finally:
+                # Final cleanup
+                remaining_tasks = [t for t in asyncio.all_tasks(loop) if not t.done()]
+                if remaining_tasks:
+                    logger.info(f"Cancelling {len(remaining_tasks)} remaining tasks in Telegram bot thread")
+                    for task in remaining_tasks:
+                        task.cancel()
+                    
+                    # Give tasks a moment to acknowledge cancellation
+                    loop.run_until_complete(asyncio.sleep(0.1))
+                
+                logger.info("Closing Telegram bot thread event loop")
+                loop.close()
         except Exception as e:
-            logger.error(f"Error in Telegram bot thread: {str(e)}")
+            logger.error(f"Error in Telegram bot thread: {str(e)}", exc_info=True)
     
     # Start the bot in a separate thread
-    thread = threading.Thread(target=_run_bot_in_thread, daemon=True)
+    thread = threading.Thread(target=_run_bot_in_thread, daemon=True, name="TelegramBotThread")
     thread.start()
     logger.info("Telegram bot thread started")
+    
+    # Return the thread so the caller can access it (e.g., for shutdown)
+    return thread
+
+def shutdown_bot(thread):
+    """Properly shutdown the bot thread"""
+    if hasattr(thread, 'shutdown_handler'):
+        logger.info("Shutting down Telegram bot thread...")
+        thread.shutdown_handler()
+        # Give the thread a moment to clean up
+        thread.join(timeout=5.0)
+        logger.info("Telegram bot shutdown complete")
+    else:
+        logger.warning("Telegram bot thread has no shutdown handler")
 
 def main() -> None:
     """Start the bot in a standard way when run directly."""

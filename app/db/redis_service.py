@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from typing import Any, Dict, Optional, Union
 import logging
 import asyncio
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -13,71 +14,75 @@ class RedisService:
     
     _instance = None
     _initialized = False
+    _lock = threading.RLock()  # Add thread lock for initialization
     
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
-            cls._instance = super(RedisService, cls).__new__(cls)
+            with cls._lock:  # Thread-safe singleton creation
+                if cls._instance is None:
+                    cls._instance = super(RedisService, cls).__new__(cls)
         return cls._instance
     
     def __init__(self):
         """Initialize Redis connection using environment variables."""
-        # Only run initialization once
-        if RedisService._initialized:
-            return
+        # Only run initialization once - with thread safety
+        with self._lock:
+            if RedisService._initialized:
+                return
+                
+            load_dotenv()
             
-        load_dotenv()
-        
-        # Parse Redis endpoint
-        redis_endpoint = os.getenv("REDIS_ENDPOINT", "")
-        host, port = redis_endpoint.split(":") if ":" in redis_endpoint else (redis_endpoint, 18369)
-        
-        # Enhanced connection pool settings - fixed to use correct parameters
-        connection_pool_kwargs = {
-            "max_connections": 50,           # Maximum number of connections in pool
-            "health_check_interval": 30,     # How often to check connection health
-        }
-        
-        try:
-            # Connect to Redis using async client with improved connection pooling
-            self.redis_client = redis.Redis(
-                host=host,
-                port=int(port),
-                password=os.getenv("REDIS_PASSWORD", ""),
-                decode_responses=False,      # Keep binary data as is
-                socket_timeout=10,           # Socket timeout
-                socket_connect_timeout=10,   # Socket connection timeout
-                retry_on_timeout=True,       # Auto-retry on timeout
-                connection_pool=redis.ConnectionPool(
-                    host=host,
-                    port=int(port),
-                    password=os.getenv("REDIS_PASSWORD", ""),
-                    decode_responses=False,
-                    **connection_pool_kwargs
-                )
-            )
+            # Parse Redis endpoint
+            redis_endpoint = os.getenv("REDIS_ENDPOINT", "")
+            host, port = redis_endpoint.split(":") if ":" in redis_endpoint else (redis_endpoint, 18369)
             
-            # Cache lock for distributed locking
-            self._locks = {}
+            # Enhanced connection pool settings - fixed to use correct parameters
+            connection_pool_kwargs = {
+                "max_connections": 50,           # Maximum number of connections in pool
+                "health_check_interval": 30,     # How often to check connection health
+            }
             
-            RedisService._initialized = True
-            logger.info("Redis service initialized with enhanced connection pool")
-        except Exception as e:
-            logger.error(f"Failed to initialize Redis: {e}")
-            # Create a fallback client with minimal settings if connection pool fails
             try:
+                # Connect to Redis using async client with improved connection pooling
                 self.redis_client = redis.Redis(
                     host=host,
                     port=int(port),
                     password=os.getenv("REDIS_PASSWORD", ""),
-                    decode_responses=False,
-                    socket_timeout=5
+                    decode_responses=False,      # Keep binary data as is
+                    socket_timeout=10,           # Socket timeout
+                    socket_connect_timeout=10,   # Socket connection timeout
+                    retry_on_timeout=True,       # Auto-retry on timeout
+                    connection_pool=redis.ConnectionPool(
+                        host=host,
+                        port=int(port),
+                        password=os.getenv("REDIS_PASSWORD", ""),
+                        decode_responses=False,
+                        **connection_pool_kwargs
+                    )
                 )
+                
+                # Cache lock for distributed locking
+                self._locks = {}
+                
                 RedisService._initialized = True
-                logger.warning("Redis initialized with fallback settings")
-            except Exception as e2:
-                logger.critical(f"Redis initialization failed completely: {e2}")
-                # Create a dummy client that logs operations but doesn't fail
-                self.redis_client = None
+                logger.info("Redis service initialized with enhanced connection pool")
+            except Exception as e:
+                logger.error(f"Failed to initialize Redis: {e}")
+                # Create a fallback client with minimal settings if connection pool fails
+                try:
+                    self.redis_client = redis.Redis(
+                        host=host,
+                        port=int(port),
+                        password=os.getenv("REDIS_PASSWORD", ""),
+                        decode_responses=False,
+                        socket_timeout=5
+                    )
+                    RedisService._initialized = True
+                    logger.warning("Redis initialized with fallback settings")
+                except Exception as e2:
+                    logger.critical(f"Redis initialization failed completely: {e2}")
+                    # Create a dummy client that logs operations but doesn't fail
+                    self.redis_client = None
     
     async def _ensure_connection(self):
         """Ensure the Redis connection is healthy"""
