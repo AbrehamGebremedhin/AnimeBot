@@ -9,6 +9,10 @@ import sys
 from fastapi import FastAPI
 from app.rest.routes import user_router, profile_router, chat_router
 from app.db.database import init_db
+# Add import for RedisService
+from app.db.redis_service import RedisService
+# Add import for Neo4jConnection
+from app.utils.neo4j_connection import Neo4jConnection
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -44,6 +48,22 @@ async def root():
     """Redirect root to docs for better user experience"""
     return RedirectResponse(url="/docs")
 
+# Global Redis service instance
+redis_service = None
+
+# Register startup event
+@app.on_event("startup")
+async def startup_event():
+    global redis_service
+    # Initialize Redis service
+    redis_service = RedisService()
+    try:
+        await init_db()
+        logger.info("Database initialized successfully on startup")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {str(e)}")
+        raise
+
 # Register shutdown event
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -53,9 +73,10 @@ async def shutdown_event():
     # First close database connections
     try:
         # Close Redis connections first (important for clean shutdown)
-        redis_service = RedisService()
-        await redis_service.close()
-        logger.info("Redis connection closed")
+        global redis_service
+        if redis_service:
+            await redis_service.close()
+            logger.info("Redis connection closed")
         
         # Then close Neo4j connections
         neo4j_connection = Neo4jConnection()
@@ -96,16 +117,6 @@ app.include_router(user_router)
 app.include_router(profile_router)
 app.include_router(chat_router)
 app.include_router(health_router)  # Add health router
-
-# Explicitly initialize database before starting
-@app.on_event("startup")
-async def startup_db_client():
-    try:
-        await init_db()
-        logger.info("Database initialized successfully on startup")
-    except Exception as e:
-        logger.error(f"Failed to initialize database: {str(e)}")
-        raise
 
 # Determine if running in development or production
 def is_development():
