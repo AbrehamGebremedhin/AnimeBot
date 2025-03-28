@@ -1,12 +1,26 @@
 from typing import List, Optional
+import os
+import logging
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.future import select
 
 from .models import Base, User
 
+logger = logging.getLogger(__name__)
+
 class SQLiteService:
-    def __init__(self, database_url: str = "sqlite+aiosqlite:///./app.db"):
+    def __init__(self, database_url: str = None):
+        # Use a path in the data directory that will be mounted as a volume
+        if database_url is None:
+            # Use the data directory that is mounted as a volume
+            data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data')
+            os.makedirs(data_dir, exist_ok=True)
+            database_path = os.path.join(data_dir, 'app.db')
+            database_url = f"sqlite+aiosqlite:///{database_path}"
+        
+        logger.info(f"Using SQLite database URL: {database_url}")
+        
         self.engine = create_async_engine(
             database_url, 
             echo=False,
@@ -20,8 +34,14 @@ class SQLiteService:
         
     async def create_tables(self):
         """Create all tables defined in models"""
-        async with self.engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        try:
+            logger.info("Creating database tables...")
+            async with self.engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("Database tables created successfully")
+        except Exception as e:
+            logger.error(f"Error creating tables: {e}")
+            raise
     
     # User-related operations
     async def create_user(self, username: str) -> User:

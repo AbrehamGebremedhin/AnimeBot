@@ -1,0 +1,19 @@
+services:
+  animebot-backend:
+    build: .
+    container_name: animebot-backend
+    ports:
+      - "8050:8050"
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8050/health/liveness"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s # Increased start period to give more time for startup
+    environment:
+      - PYTHONPATH=/app

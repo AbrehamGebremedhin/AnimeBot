@@ -19,6 +19,26 @@ app = FastAPI(title="Anime Bot API")
 
 # Add a redirect from root to docs
 from fastapi.responses import RedirectResponse
+
+# Import health router if it exists, or create a simple one
+try:
+    from app.rest.health import health_router
+    logger.info("Imported health_router from app.rest.health")
+except ImportError:
+    # Create a basic health router
+    from fastapi import APIRouter
+    health_router = APIRouter(prefix="/health", tags=["health"])
+    
+    @health_router.get("/liveness")
+    async def liveness():
+        return {"status": "alive"}
+    
+    @health_router.get("/readiness")
+    async def readiness():
+        return {"status": "ready"}
+    
+    logger.info("Created basic health endpoints")
+
 @app.get("/")
 async def root():
     """Redirect root to docs for better user experience"""
@@ -50,6 +70,7 @@ async def shutdown_event():
 app.include_router(user_router)
 app.include_router(profile_router)
 app.include_router(chat_router)
+app.include_router(health_router)  # Add health router
 
 # Explicitly initialize database before starting
 @app.on_event("startup")
@@ -80,9 +101,9 @@ def start_telegram_bot():
         backend_api_url = os.environ.get("BACKEND_API_URL") 
         logger.info(f"Using BACKEND_API_URL: {backend_api_url}")
         
-        # Get the path to the telegramBot.py file
+        # Get the path to the telegramBot.py file in the app/bot module
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        bot_path = os.path.join(script_dir, "telegramBot.py")
+        bot_path = os.path.join(script_dir, "app", "bot", "telegramBot.py")
         
         if not os.path.exists(bot_path):
             logger.error(f"Telegram bot script not found at {bot_path}")
@@ -119,11 +140,12 @@ def start_telegram_bot():
             # In production (like on Render), import and run directly
             logger.info("Starting Telegram bot in production mode (direct import)")
             try:
-                # Import the telegramBot module dynamically
-                import importlib.util
-                spec = importlib.util.spec_from_file_location("telegramBot", bot_path)
-                telegram_bot_module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(telegram_bot_module)
+                # Set environment variable to disable signal handling in thread
+                os.environ["PYTHONUNBUFFERED"] = "1"
+                os.environ["TELEGRAM_NO_THREAD_SIGNALS"] = "1"
+                
+                # Import the telegramBot module dynamically from the app.bot package
+                from app.bot import telegramBot as telegram_bot_module
                 
                 # Start the bot in a thread (if the module provides a start function)
                 if hasattr(telegram_bot_module, "start_bot"):
