@@ -50,19 +50,44 @@ async def shutdown_event():
     """Clean up resources when shutting down"""
     logger.info("Shutting down application, cleaning up resources...")
     
-    # Allow time for pending tasks to complete
-    pending = asyncio.all_tasks()
-    logger.info(f"Waiting for {len(pending)} pending tasks to complete...")
+    # First close database connections
+    try:
+        # Close Redis connections first (important for clean shutdown)
+        redis_service = RedisService()
+        await redis_service.close()
+        logger.info("Redis connection closed")
+        
+        # Then close Neo4j connections
+        neo4j_connection = Neo4jConnection()
+        neo4j_connection.close()
+        logger.info("Neo4j connection closed")
+    except Exception as e:
+        logger.error(f"Error closing database connections: {str(e)}")
     
-    # Give tasks some time to complete
-    for task in pending:
+    # Now handle pending tasks more safely
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    
+    if tasks:
+        logger.info(f"Waiting for {len(tasks)} pending tasks to complete...")
+        
+        # Give tasks some time to complete
         try:
-            # Only wait for a short time to avoid hanging shutdown
-            await asyncio.wait_for(task, timeout=2.0)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            pass
+            # Wait with a timeout
+            done, pending = await asyncio.wait(tasks, timeout=3.0)
+            
+            # Cancel any remaining tasks
+            if pending:
+                logger.info(f"Cancelling {len(pending)} remaining tasks")
+                for task in pending:
+                    task.cancel()
+                
+                # Wait briefly to let cancellation complete
+                try:
+                    await asyncio.wait(pending, timeout=1.0)
+                except asyncio.CancelledError:
+                    pass
         except Exception as e:
-            logger.error(f"Error in task during shutdown: {str(e)}")
+            logger.error(f"Error waiting for tasks during shutdown: {str(e)}")
     
     logger.info("Application shutdown complete")
 

@@ -7,6 +7,7 @@ from .rest.routes import user_router, profile_router, chat_router
 from .rest.health import health_router
 from .rest.tasks import tasks_router
 from .utils.neo4j_connection import Neo4jConnection
+from .db.redis_service import RedisService
 from .middleware.rate_limiter import RateLimiter
 from .middleware.request_monitor import RequestMonitorMiddleware
 from app.rest.maintenance import maintenance_router
@@ -63,23 +64,43 @@ async def shutdown_event():
     """Clean up resources when shutting down"""
     logger.info("Shutting down application, cleaning up resources...")
     
-    # Close Neo4j connections
-    neo4j_connection = Neo4jConnection()
-    neo4j_connection.close()
+    # First close Redis connections
+    try:
+        redis_service = RedisService()
+        await redis_service.close()
+        logger.info("Redis services closed")
+    except Exception as e:
+        logger.error(f"Error closing Redis connection: {str(e)}")
+    
+    # Then close Neo4j connections
+    try:
+        neo4j_connection = Neo4jConnection()
+        neo4j_connection.close()
+        logger.info("Neo4j connection closed")
+    except Exception as e:
+        logger.error(f"Error closing Neo4j connection: {str(e)}")
     
     # Allow time for pending tasks to complete
-    pending = asyncio.all_tasks()
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     logger.info(f"Waiting for {len(pending)} pending tasks to complete...")
     
     # Give tasks some time to complete
-    for task in pending:
+    if pending:
         try:
-            # Only wait for a short time to avoid hanging shutdown
-            await asyncio.wait_for(task, timeout=2.0)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            pass
+            # Wait for a short time with timeout to avoid hanging shutdown
+            await asyncio.wait(pending, timeout=3.0)
+            
+            # Cancel any remaining tasks
+            remaining = [t for t in pending if not t.done()]
+            if remaining:
+                logger.info(f"Cancelling {len(remaining)} remaining tasks")
+                for task in remaining:
+                    task.cancel()
+                
+                # Wait briefly to let cancellation complete
+                await asyncio.wait(remaining, timeout=1.0)
         except Exception as e:
-            logger.error(f"Error in task during shutdown: {str(e)}")
+            logger.error(f"Error waiting for tasks during shutdown: {str(e)}")
     
     logger.info("Application shutdown complete")
 
