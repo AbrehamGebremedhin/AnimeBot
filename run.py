@@ -80,21 +80,24 @@ async def shutdown_event():
         
         # Then close Neo4j connections
         neo4j_connection = Neo4jConnection()
+        # Close sync driver
         neo4j_connection.close()
+        # Close async driver properly
+        await neo4j_connection.close_async()
         logger.info("Neo4j connection closed")
     except Exception as e:
         logger.error(f"Error closing database connections: {str(e)}")
     
-    # Now handle pending tasks more safely
+    # Now handle pending tasks more safely - with a longer timeout
     tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     
     if tasks:
         logger.info(f"Waiting for {len(tasks)} pending tasks to complete...")
         
-        # Give tasks some time to complete
+        # Give tasks more time to complete
         try:
-            # Wait with a timeout
-            done, pending = await asyncio.wait(tasks, timeout=3.0)
+            # Wait with a timeout - increased to 5 seconds
+            done, pending = await asyncio.wait(tasks, timeout=5.0)
             
             # Cancel any remaining tasks
             if pending:
@@ -102,11 +105,13 @@ async def shutdown_event():
                 for task in pending:
                     task.cancel()
                 
-                # Wait briefly to let cancellation complete
+                # Wait longer to let cancellation complete
                 try:
-                    await asyncio.wait(pending, timeout=1.0)
+                    await asyncio.wait(pending, timeout=2.0)
                 except asyncio.CancelledError:
                     pass
+                except Exception as e:
+                    logger.error(f"Error during task cancellation: {str(e)}")
         except Exception as e:
             logger.error(f"Error waiting for tasks during shutdown: {str(e)}")
     
@@ -211,5 +216,34 @@ if __name__ == "__main__":
     env = "development" if reload else "production"
     logger.info(f"Starting server in {env} mode on {host}:{port} (reload: {reload})")
     
-    # Start the API server
-    uvicorn.run("run:app", host=host, port=port, reload=reload)
+    # Start the API server with proper exception handling
+    try:
+        # Use uvicorn's run directly, which handles signal management
+        uvicorn.run("run:app", host=host, port=port, reload=reload)
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Received shutdown signal. Exiting gracefully...")
+    except Exception as e:
+        logger.error(f"Server error: {str(e)}")
+    finally:
+        # Ensure any remaining tasks are properly shut down
+        try:
+            # Get any pending tasks in the default event loop
+            loop = asyncio.get_event_loop()
+            if not loop.is_closed():
+                logger.info("Closing event loop...")
+                tasks = [t for t in asyncio.all_tasks(loop) if not t.done()]
+                
+                if tasks:
+                    logger.info(f"Cancelling {len(tasks)} remaining tasks...")
+                    for task in tasks:
+                        task.cancel()
+                    
+                    # Wait briefly for tasks to acknowledge cancellation
+                    loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+                
+                loop.close()
+                logger.info("Event loop closed")
+        except Exception as e:
+            logger.error(f"Error during final cleanup: {str(e)}")
+        
+        logger.info("Application shut down successfully")
