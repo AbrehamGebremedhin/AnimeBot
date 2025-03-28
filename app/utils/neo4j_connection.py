@@ -160,3 +160,15 @@ class Neo4jConnection:
         except Exception as e:
             logging.error(f"Error cleaning old recommendations: {str(e)}")
             return 0
+
+    def __del__(self):
+        """
+        Safely handle object deletion during garbage collection.
+        
+        This prevents errors when Neo4j driver is garbage collected
+        after the event loop is closed.
+        """
+        # Set driver references to None to prevent their __del__ methods
+        # from trying to clean up connections with a closed event loop
+        self.driver = None
+        self.async_driver = None

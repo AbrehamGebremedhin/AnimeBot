@@ -313,7 +313,52 @@ class RedisService:
         """
         try:
             if self.redis_client:
+                # Clear the connection pool before closing to prevent lingering connections
+                # that might try to use a closed event loop during garbage collection
+                if hasattr(self.redis_client, 'connection_pool'):
+                    try:
+                        # Get the connection pool
+                        pool = self.redis_client.connection_pool
+                        
+                        # Clear all connections in the pool
+                        if hasattr(pool, 'disconnect'):
+                            await pool.disconnect(inuse_connections=True)
+                        elif hasattr(pool, 'reset'):
+                            pool.reset()
+                            
+                        # Release all connections directly if needed
+                        if hasattr(pool, 'connections'):
+                            for connection in list(pool.connections):
+                                # Manually close and remove each connection
+                                try:
+                                    if hasattr(connection, 'disconnect'):
+                                        await connection.disconnect()
+                                    pool.connections.remove(connection)
+                                except Exception:
+                                    pass
+                        
+                        logger.info("Redis connection pool cleared")
+                    except Exception as pool_error:
+                        logger.warning(f"Error clearing Redis connection pool: {str(pool_error)}")
+                
+                # Now close the client
                 await self.redis_client.close()
+                
+                # Remove references to prevent __del__ from being called later
+                self.redis_client = None
                 logger.info("Redis connection closed successfully")
         except Exception as e:
             logger.error(f"Error closing Redis connection: {str(e)}")
+            # Set to None to avoid future errors in __del__
+            self.redis_client = None
+
+    def __del__(self):
+        """
+        Safely handle object deletion during garbage collection.
+        
+        This prevents errors when the Redis client is garbage collected
+        after the event loop is closed.
+        """
+        # Set client to None to prevent the Redis client's __del__ method
+        # from trying to clean up connections
+        self.redis_client = None
