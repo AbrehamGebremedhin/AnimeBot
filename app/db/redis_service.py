@@ -298,3 +298,17 @@ class RedisService:
         except Exception as e:
             logger.error(f"Redis lock release error: {str(e)}")
             return False
+    
+    async def close(self) -> None:
+        """
+        Close the Redis connection properly.
+        
+        This method should be called during application shutdown
+        to ensure all Redis resources are properly released.
+        """
+        try:
+            if self.redis_client:
+                await self.redis_client.close()
+                logger.info("Redis connection closed successfully")
+        except Exception as e:
+            logger.error(f"Error closing Redis connection: {str(e)}")
