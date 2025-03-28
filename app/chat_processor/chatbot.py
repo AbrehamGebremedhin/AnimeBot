@@ -1,20 +1,28 @@
 import os
 import json
+import logging
+import asyncio
+from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from .user_management import UserService
 from langchain_core.output_parsers import JsonOutputParser
 from ..utils.neo4j_connection import Neo4jConnection
 from ..db.redis_service import RedisService
-import asyncio
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 load_dotenv(r'.env')
 
 api_key = os.getenv('GEMINI_API_KEY')
 
 class Chat:
-    def __init__(self, user_id):
+    """
+    Class to handle chat interactions with users
+    """
+    def __init__(self, user_id: str):
         """
         Initialize the Chat class with user ID and necessary components.
 
@@ -26,7 +34,6 @@ class Chat:
         
         self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
         self.parser = JsonOutputParser()
-        self.questions = json.load(open(r'data\questions.json'))
         self.user_service = UserService()
         
         # Replace OllamaEmbeddings with GoogleGenerativeAIEmbeddings
@@ -48,6 +55,40 @@ class Chat:
         
         # Add in-memory cache of recent recommendations to prevent repeats in sequential requests
         self.recent_recommendations = []
+        
+        # Load questions with proper path and error handling
+        try:
+            # Use os.path.join to handle path separators correctly across platforms
+            questions_path = os.path.join('data', 'questions.json')
+            
+            # Try the local path first
+            if os.path.exists(questions_path):
+                with open(questions_path, 'r') as f:
+                    self.questions = json.load(f)
+                logger.info(f"Loaded questions from {questions_path}")
+            else:
+                # Try absolute path in Docker container
+                docker_path = os.path.join('/app', 'data', 'questions.json')
+                if os.path.exists(docker_path):
+                    with open(docker_path, 'r') as f:
+                        self.questions = json.load(f)
+                    logger.info(f"Loaded questions from {docker_path}")
+                else:
+                    # Fallback to a default empty structure
+                    logger.warning("Questions file not found, using empty default structure")
+                    self.questions = {
+                        "user_info": [],
+                        "preferences": [],
+                        # Add other empty categories
+                    }
+        except Exception as e:
+            logger.error(f"Error loading questions: {str(e)}")
+            # Fallback to empty structure on error
+            self.questions = {
+                "user_info": [],
+                "preferences": [],
+                # Add other empty categories
+            }
     
     async def initialize(self):
         """

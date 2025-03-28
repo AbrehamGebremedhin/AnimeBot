@@ -19,8 +19,26 @@ from telegram.ext import (
     filters
 )
 
-# Load environment variables
-load_dotenv('.env')
+# Import our signal handler utility
+try:
+    from app.bot.telegram_signal_fix import safe_add_signal_handler
+except ImportError:
+    # Fallback implementation if the module doesn't exist
+    def safe_add_signal_handler(loop, sig, handler):
+        is_thread = threading.current_thread() is not threading.main_thread()
+        if is_thread:
+            logging.getLogger(__name__).info(f"Skipping signal handler setup for signal {sig} in non-main thread")
+            return False
+        try:
+            loop.add_signal_handler(sig, handler)
+            return True
+        except (NotImplementedError, RuntimeError) as e:
+            logging.getLogger(__name__).warning(f"Could not add signal handler: {e}")
+            return False
+
+# Load environment variables from project root .env file
+dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), '.env')
+load_dotenv(dotenv_path)
 
 # Enable logging
 logging.basicConfig(
@@ -32,6 +50,8 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 if not BOT_TOKEN:
     logger.error("Telegram bot token not found! Please set TELEGRAM_BOT_TOKEN in your .env file.")
+else:
+    logger.info(f"Bot token available: Yes")
 
 # States for conversation handler
 (
@@ -40,10 +60,9 @@ if not BOT_TOKEN:
     SAVING_ANSWERS,
 ) = range(3)
 
-API_BASE_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
-
-logging.info(f"BACKEND_API_URL: {os.getenv('BACKEND_API_URL')}")
-logging.info(f"API_BASE_URL: {API_BASE_URL}")
+API_BASE_URL = os.getenv("BACKEND_API_URL", "http://localhost:8050")
+logger.info(f"BACKEND_API_URL: {os.getenv('BACKEND_API_URL')}")
+logger.info(f"API_BASE_URL: {API_BASE_URL}")
 
 # Question categories
 CATEGORIES = [
@@ -61,9 +80,12 @@ CATEGORIES = [
 # These command handlers are needed for the start_bot function
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
-    await update.message.reply_text(
-        "Hi! I'm your Anime Bot. Use /start to set up your profile or /recommend to get anime recommendations."
-    )
+    user = update.effective_user
+    user_id = str(user.id)
+    logger.info(f"Start command received from user {user_id}")
+    
+    # Redirect to the profile setup conversation
+    return await start(update, context)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
@@ -80,25 +102,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = str(update.effective_user.id)
     message = update.message.text
     
+    logger.info(f"Received message from user {user_id}: {message}")
+    
     try:
         # Call the chat API
         url = f"{API_BASE_URL}/chat/"
+        logger.info(f"Sending request to API: {url}")
+        
         data = {
             "user_id": user_id,
             "reply": message
         }
         response = requests.post(url, json=data)
         response.raise_for_status()
+        
+        logger.info(f"API response status: {response.status_code}")
         chat_response = response.json()
+        logger.info(f"API response: {chat_response}")
         
         if isinstance(chat_response, dict) and "question" in chat_response:
             await update.message.reply_text(chat_response["question"])
+            logger.info(f"Sent question response to user {user_id}")
         elif isinstance(chat_response, str):
             await update.message.reply_text(chat_response)
+            logger.info(f"Sent string response to user {user_id}")
         else:
             await update.message.reply_text("I'm not sure how to respond to that.")
+            logger.warning(f"Unknown response format for user {user_id}: {chat_response}")
     except Exception as e:
-        logger.error(f"Error in handle_message: {str(e)}")
+        logger.error(f"Error in handle_message: {str(e)}", exc_info=True)
         await update.message.reply_text(
             "Sorry, I'm having trouble processing your message right now."
         )
@@ -108,11 +140,16 @@ async def get_questions_for_category(user_id: str, category: str) -> List[Dict[s
     """Fetch questions for a specific category from the API."""
     try:
         url = f"{API_BASE_URL}/profile/questions?user_id={user_id}&category={category}"
+        logger.info(f"Fetching questions from: {url}")
+        
         response = requests.get(url)
         response.raise_for_status()
-        return response.json()
+        
+        result = response.json()
+        logger.info(f"Received questions response: {result[:100]}...")  # Log just the beginning to avoid huge logs
+        return result
     except Exception as e:
-        logger.error(f"Error fetching questions: {e}")
+        logger.error(f"Error fetching questions: {str(e)}", exc_info=True)
         return []
 
 async def update_user_profile(user_id: str, category: str, answers: Dict[str, Any]) -> bool:
@@ -139,25 +176,25 @@ async def create_user_if_not_exists(user_id: str, username: str) -> bool:
             # Check if user exists in both databases using the exists endpoint
             exists_url = f"{API_BASE_URL}/users/exists/{user_id}"
             
-            logging.info(f"Checking if user {user_id} exists at URL: {exists_url}")
+            logger.info(f"Checking if user {user_id} exists at URL: {exists_url}")
             
             try:
                 async with session.get(exists_url) as response:
                     if response.status == 200:
                         response_json = await response.json()
-                        logging.info(f"User exists check result: {response_json}")
+                        logger.info(f"User exists check result: {response_json}")
                         
                         # Only return True if the user exists in both databases
                         if response_json.get("exists", False):
-                            logging.info(f"User {user_id} already exists in both databases")
+                            logger.info(f"User {user_id} already exists in both databases")
                             return True
                         else:
-                            logging.info(f"User {user_id} not found in one or both databases - will create")
+                            logger.info(f"User {user_id} not found in one or both databases - will create")
                     else:
                         response_text = await response.text()
-                        logging.warning(f"Unexpected status code when checking user: {response.status}, response: {response_text[:100]}")
+                        logger.warning(f"Unexpected status code when checking user: {response.status}, response: {response_text[:100]}")
             except Exception as e:
-                logging.error(f"Error checking if user exists: {e}")
+                logger.error(f"Error checking if user exists: {str(e)}", exc_info=True)
             
             # Create new user with username as user_id
             url = f"{API_BASE_URL}/users/"
@@ -166,18 +203,18 @@ async def create_user_if_not_exists(user_id: str, username: str) -> bool:
                 "user_id": user_id  # Use the actual user_id
             }
             
-            logging.info(f"Creating new user with data: {data} at URL: {url}")
+            logger.info(f"Creating new user with data: {data} at URL: {url}")
             
             try:
                 # Add more detailed error handling
                 async with session.post(url, json=data) as response:
                     response_text = await response.text()
-                    logging.info(f"User creation response status: {response.status}, body: {response_text}")
+                    logger.info(f"User creation response status: {response.status}, body: {response_text}")
                     
                     # Consider both 200 and 201 as success, plus also handle cases where
                     # the API returns an error but the user was actually created
                     if response.status in (200, 201):
-                        logging.info(f"Successfully created user {user_id} ({username})")
+                        logger.info(f"Successfully created user {user_id} ({username})")
                         return True
                     else:
                         # Check if the user exists anyway despite the error
@@ -185,13 +222,13 @@ async def create_user_if_not_exists(user_id: str, username: str) -> bool:
                             if check_response.status == 200:
                                 check_json = await check_response.json()
                                 if check_json.get("exists", False):
-                                    logging.info(f"User {user_id} exists despite API error - continuing")
+                                    logger.info(f"User {user_id} exists despite API error - continuing")
                                     return True
                                 
-                        logging.error(f"Failed to create user. Status: {response.status}, Response: {response_text}")
+                        logger.error(f"Failed to create user. Status: {response.status}, Response: {response_text}")
                         return False
             except Exception as e:
-                logging.error(f"Error creating user: {e}")
+                logger.error(f"Error creating user: {str(e)}", exc_info=True)
                 
                 # Even if there was an exception, check if the user was created
                 try:
@@ -199,14 +236,14 @@ async def create_user_if_not_exists(user_id: str, username: str) -> bool:
                         if check_response.status == 200:
                             check_json = await check_response.json()
                             if check_json.get("exists", False):
-                                logging.info(f"User {user_id} exists despite exception - continuing")
+                                logger.info(f"User {user_id} exists despite exception - continuing")
                                 return True
                 except Exception as check_error:
-                    logging.error(f"Error checking if user exists after creation error: {check_error}")
+                    logger.error(f"Error checking if user exists after creation error: {str(check_error)}", exc_info=True)
                 
                 return False
     except Exception as e:
-        logging.error(f"Error in create_user_if_not_exists: {e}")
+        logger.error(f"Error in create_user_if_not_exists: {str(e)}", exc_info=True)
         return False
 
 # Command Handlers
@@ -222,9 +259,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "Let's set up your profile so I can recommend some great anime for you!"
     )
     
-    # Create user if not exists
+    # Create user if not exists with more detailed logging
+    logger.info(f"Attempting to create user {user_id} in databases")
     success = await create_user_if_not_exists(user_id, username)
+    
     if not success:
+        logger.error(f"Failed to create user {user_id} in databases")
         await update.message.reply_text(
             "Sorry, I encountered an error setting up your account. Please try again later."
         )
@@ -236,12 +276,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["category_answers"] = {}
     
     # Start with the first category
+    logger.info(f"Starting category questions for user {user_id}")
     return await show_category_questions(update, context)
 
 async def show_category_questions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show questions for the current category, starting with the first question."""
     user_id = context.user_data.get("user_id")
     category_index = context.user_data.get("current_category_index", 0)
+    
+    logger.info(f"Showing category questions for user {user_id}, category index {category_index}")
     
     if category_index >= len(CATEGORIES):
         # All categories completed
@@ -256,7 +299,16 @@ async def show_category_questions(update: Update, context: ContextTypes.DEFAULT_
     context.user_data["category_answers"] = {}
     
     # Get questions for this category
+    logger.info(f"Fetching questions for user {user_id}, category {current_category}")
     questions = await get_questions_for_category(user_id, current_category)
+    
+    if not questions:
+        logger.warning(f"No questions found for category {current_category}")
+        await send_message(update, context, "Sorry, I couldn't find any questions for this category. Let's try the next one.")
+        context.user_data["current_category_index"] += 1
+        return await show_category_questions(update, context)
+    
+    logger.info(f"Received {len(questions)} questions for category {current_category}")
     context.user_data["questions"] = questions
     context.user_data["current_question_index"] = 0
     
@@ -483,12 +535,12 @@ async def recommend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             # Create inline keyboard with action buttons
             keyboard = [
                 [
-                    InlineKeyboardButton("📋 More Details", callback_data=f"details_{i}_{anime.get('id', i)}"),
-                    InlineKeyboardButton("📖 Full Synopsis", callback_data=f"synopsis_{i}_{anime.get('id', i)}")
+                    InlineKeyboardButton("📋 More Details", callback_data=f"details_{i}_{anime.get('anime_id', i)}"),
+                    InlineKeyboardButton("📖 Full Synopsis", callback_data=f"synopsis_{i}_{anime.get('anime_id', i)}")
                 ],
                 [
-                    InlineKeyboardButton("🔍 Find Similar", callback_data=f"similar_{anime.get('id', i)}"),
-                    InlineKeyboardButton("⭐ Add to Favorites", callback_data=f"favorite_{anime.get('id', i)}")
+                    InlineKeyboardButton("🔍 Find Similar", callback_data=f"similar_{anime.get('anime_id', i)}"),
+                    InlineKeyboardButton("⭐ Add to Favorites", callback_data=f"favorite_{anime.get('anime_id', i)}")
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -522,7 +574,7 @@ async def recommend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 context.user_data["anime_details"] = {}
                 
             # Create a unique key for this anime
-            anime_key = f"anime_{anime.get('id', i)}"
+            anime_key = f"anime_{anime.get('anime_id', i)}_{i}"
             context.user_data["anime_details"][anime_key] = {
                 "title": title,
                 "full_synopsis": synopsis,
@@ -597,9 +649,12 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = str(update.effective_user.id)  # Convert to string
     message = update.message.text
     
+    logger.info(f"Chat function called with message: {message}")
+    
     try:
         # Call the chat API
         url = f"{API_BASE_URL}/chat/"
+        logger.info(f"Making chat API request to: {url}")
         data = {
             "user_id": user_id,
             "reply": message
@@ -608,12 +663,16 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         response.raise_for_status()
         chat_response = response.json()
         
+        logger.info(f"Chat API response: {chat_response}")
+        
         if "question" in chat_response:
             await update.message.reply_text(chat_response["question"])
+            logger.info(f"Sent question response to user {user_id}")
         else:
             await update.message.reply_text("I'm not sure how to respond to that.")
+            logger.warning(f"Unexpected response format: {chat_response}")
     except Exception as e:
-        logger.error(f"Error in chat: {e}")
+        logger.error(f"Error in chat: {e}", exc_info=True)
         await update.message.reply_text(
             "Sorry, I'm having trouble processing your message right now."
         )
@@ -630,14 +689,13 @@ async def send_message(update: Update, context: ContextTypes.DEFAULT_TYPE, text:
 async def _run_telegram_bot():
     """Run the Telegram bot asynchronously."""
     try:
+        logger.info("Initializing Telegram bot application...")
+        
         # Create the Application
         application = Application.builder().token(BOT_TOKEN).build()
         
-        # Add command handlers
-        application.add_handler(CommandHandler("start", start_command))
-        application.add_handler(CommandHandler("help", help_command))
-        
-        # Add conversation handler - fix per_message setting
+        # Important - Add conversation handler FIRST before other command handlers
+        logger.info("Setting up conversation handler...")
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler("start", start)],
             states={
@@ -657,39 +715,42 @@ async def _run_telegram_bot():
             persistent=False,
         )
         
-        # Add handlers
+        # Add handlers in the correct order
         application.add_handler(conv_handler)
+        application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CommandHandler("recommend", recommend))
         application.add_handler(CallbackQueryHandler(handle_anime_callback, pattern=r"^(details|synopsis|similar|favorite)_\d+_\d+$"))
+        
+        # Important: Make sure message handler is added LAST to avoid conflicts with other handlers
+        logger.info("Adding text message handler...")
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
         
         # Start the bot
+        logger.info("Initializing bot application...")
         await application.initialize()
         await application.start()
         
-        logger.info("Starting Telegram bot polling...")
-        await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-        logger.info("Telegram bot started successfully")
+        logger.info("Starting polling...")
+        await application.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+        logger.info("Bot started successfully")
         
-        # Replace idle() with a method to keep the event loop running
         # Create a future that will never be set to keep the event loop running
         stop_signal = asyncio.Future()
         
-        # Define a signal handler to handle graceful shutdown
+        # Define a signal handler for graceful shutdown
         def signal_handler():
             stop_signal.set_result(None)
-            
+        
         # Register signal handlers for graceful shutdown
         loop = asyncio.get_running_loop()
+        
+        # Use our safe signal handler utility for SIGINT and SIGTERM
         for sig in (signal.SIGINT, signal.SIGTERM):
-            try:
-                loop.add_signal_handler(sig, signal_handler)
-            except NotImplementedError:
-                # Windows doesn't support signals fully
-                pass
+            # Use our safe signal handler instead of direct loop.add_signal_handler
+            safe_add_signal_handler(loop, sig, signal_handler)
                 
         # Wait until stop signal is received
-        logger.info("Bot is running. Press Ctrl+C to stop")
+        logger.info("Bot is running and ready to process messages. Press Ctrl+C to stop")
         try:
             await stop_signal
         except asyncio.CancelledError:
@@ -701,7 +762,7 @@ async def _run_telegram_bot():
         logger.info("Bot stopped")
         
     except Exception as e:
-        logger.error(f"Failed to start Telegram bot: {str(e)}")
+        logger.error(f"Failed to start Telegram bot: {str(e)}", exc_info=True)
 
 def start_bot():
     """Start the bot in a non-blocking way that can be called from another module."""
