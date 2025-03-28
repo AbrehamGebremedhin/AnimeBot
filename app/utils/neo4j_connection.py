@@ -114,11 +114,21 @@ class Neo4jConnection:
                 logger.info("Closed synchronous Neo4j driver")
                 
             if self.async_driver:
-                self.async_driver.close()
-                logger.info("Closed asynchronous Neo4j driver")
+                # Don't call async method without awaiting
+                # This causes RuntimeWarning: coroutine 'AsyncDriver.close' was never awaited
+                logger.info("Async driver will be closed properly during shutdown")
                 
         except Exception as e:
             logger.error(f"Error while closing Neo4j connections: {str(e)}")
+
+    async def close_async(self):
+        """Close async Neo4j driver connections properly"""
+        try:
+            if self.async_driver:
+                await self.async_driver.close()
+                logger.info("Closed asynchronous Neo4j driver")
+        except Exception as e:
+            logger.error(f"Error while closing async Neo4j connection: {str(e)}")
 
     async def clean_old_recommendations(self, older_than_days=30):
         """
