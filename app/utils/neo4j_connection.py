@@ -2,6 +2,7 @@ import os
 import time
 import logging
 import sys
+import threading
 from neo4j import GraphDatabase, AsyncGraphDatabase
 from dotenv import load_dotenv
 
@@ -14,13 +15,15 @@ load_dotenv('.env')
 
 class Neo4jConnection:
     _instance = None
+    _lock = threading.RLock()  # Add thread lock for initialization
 
     def __new__(cls, *args, **kwargs):
-        if not cls._instance:
-            cls._instance = super(Neo4jConnection, cls).__new__(
-                cls, *args, **kwargs)
-            cls._instance._init_driver()
-        return cls._instance
+        with cls._lock:  # Thread-safe singleton creation
+            if not cls._instance:
+                cls._instance = super(Neo4jConnection, cls).__new__(
+                    cls, *args, **kwargs)
+                cls._instance._init_driver()
+            return cls._instance
 
     def _init_driver(self, max_retries=5, retry_delay=5):
         """Initialize Neo4j drivers with retry logic"""
